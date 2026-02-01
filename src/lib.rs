@@ -1,4 +1,4 @@
-use stripack_sys::ffi::trmesh;
+use stripack_sys::ffi::{addnod, trmesh};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -11,6 +11,14 @@ pub enum TriangulationError {
     IncorrectNodeCount,
     #[error("All coordinates must form unit vectors")]
     NotUnitVectors,
+}
+
+#[derive(Debug, Error)]
+pub enum AddNodeError {
+    #[error("Invalid k value")]
+    InvalidIndex,
+    #[error("All nodes are collinear")]
+    CollinearNodes,
 }
 
 /**
@@ -30,7 +38,7 @@ Provided the nodes are randomly ordered, the algorithm has expected time complex
 #[derive(Debug, Clone)]
 pub struct DelaunayTriangulation {
     /// The number of nodes in the triangulation
-    n: i32,
+    n: usize,
     /// The `x`-coordinates of the nodes in the triangulation
     x: Vec<f64>,
     /// The `y`-coordinates of the nodes in the triangulation
@@ -93,7 +101,8 @@ impl DelaunayTriangulation {
             }
         }
 
-        let n = i32::try_from(x.len()).unwrap_or_else(|_| panic!("n < {}", i32::MAX));
+        let n =
+            i32::try_from(x.len()).unwrap_or_else(|_| panic!("n must be less than {}", i32::MAX));
         let list_size = if n >= 3 { 6 * (n - 2) } else { 0 } as usize;
         let mut list = vec![0i32; list_size];
         let mut lptr = vec![0i32; list_size];
@@ -129,7 +138,7 @@ impl DelaunayTriangulation {
         }
 
         Ok(Self {
-            n,
+            n: n as usize,
             x,
             y,
             z,
@@ -138,5 +147,70 @@ impl DelaunayTriangulation {
             lend,
             lnew,
         })
+    }
+
+    /**
+    Adds a node to a triangulation of the convex hull of nodes `1, ..., n-1`, producing a
+    triangulation of the convex hull of nodes `1, ..., n`.
+
+    The algorithm consists of the following steps: node `n` is located relative to the
+    triangulation ([find]), its index is added to the data structure ([intadd] or [bdyadd]), and a sequence of swaps ([swptst] and [swap]) are applied to the arcs opposite `n` so that all arcs incident on node `n` and opposite node `n` are locally optimal (statisfy the circumcircle test).
+
+    Thus, if a Delaunay triangulation of nodes `1` through `n-1` is input, a Delaunay
+    triangulation of nodes `1` through `n` will be output.
+
+    # Arguments
+    * `start_node`: The index of a node in which [`find`] begins its search.
+    * `p`: The coordinate of the new node to add.
+
+    # Errors
+    * If `start_node` is invalid.
+    * If all nodes (including `start_node`) are collinear (lie on a common geodesic).
+
+    # Panics
+    * If `index` is greater than [`i32::MAX`].
+     */
+    pub fn add_node(
+        &mut self,
+        start_node: i32,
+        p: impl for<'a> Into<&'a [f64; 3]>,
+    ) -> Result<(), AddNodeError> {
+        let k = self.n + 1;
+        let p = p.into();
+        self.x.push(p[0]);
+        self.y.push(p[1]);
+        self.z.push(p[2]);
+
+        let new_list_size = 6 * (self.n + 1 - 2);
+        self.list.resize(new_list_size, 0);
+        self.lptr.resize(new_list_size, 0);
+        self.lend.resize(self.n + 1, 0);
+
+        let mut ier = 0i32;
+        let k = i32::try_from(k)
+            .unwrap_or_else(|_| panic!("The new number of nodes must be less than {}", i32::MAX));
+
+        unsafe {
+            addnod(
+                &raw const start_node,
+                &raw const k,
+                self.x.as_ptr(),
+                self.y.as_ptr(),
+                self.z.as_ptr(),
+                self.list.as_mut_ptr(),
+                self.lptr.as_mut_ptr(),
+                self.lend.as_mut_ptr(),
+                &raw mut self.lnew,
+                &raw mut ier,
+            );
+        }
+
+        match ier {
+            -1 => return Err(AddNodeError::InvalidIndex),
+            -2 => return Err(AddNodeError::CollinearNodes),
+            _ => {}
+        }
+
+        Ok(())
     }
 }
