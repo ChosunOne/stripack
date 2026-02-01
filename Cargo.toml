@@ -1,0 +1,9 @@
+[package]
+name = "stripack"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93.0"
+
+[dependencies]
+stripack-sys = "^0.1.1"
+thiserror = "^2.0.18"
