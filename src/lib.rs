@@ -1,4 +1,4 @@
-use stripack_sys::ffi::{addnod, bnodes, circum, trmesh};
+use stripack_sys::ffi::{addnod, bnodes, circum, delnod, trmesh};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -27,15 +27,38 @@ pub enum CircumcenterError {
     Collinear,
 }
 
+#[derive(Debug, Error)]
+pub enum DeleteNodeError {
+    #[error("Invalid node index")]
+    InvalidNodeIndex,
+    #[error("Not enough space")]
+    NotEnoughSpace,
+    #[error("Invalid or corrupt triangulation")]
+    InvalidTriangulation,
+    #[error(
+        "node_index indexes an interior node with four or more neighbors, none of which can be swapped out due to collinearity"
+    )]
+    Collinear,
+    #[error("Optimization error")]
+    OptimizationError,
+}
+
 /// The boundary nodes for a triangulation.
+#[derive(Debug, Clone)]
 pub struct BoundaryInfo {
     /// Ordered sequence of boundary node indexes (counterclockwise)
     /// Empty if nodes don't lie in a single hemisphere
-    pub nodes: Vec<i32>,
+    pub nodes: Vec<usize>,
     /// The number of arcs in the triangulation
     pub num_arcs: usize,
     /// The number of triangles in the triangulation
     pub num_triangles: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct NodeDeletionInfo {
+    /// The indexes of the endpoints of the new arcs added.
+    pub new_arc_endpoints: Vec<usize>,
 }
 
 /**
@@ -167,14 +190,14 @@ impl DelaunayTriangulation {
     }
 
     /**
-    Adds a node to a triangulation of the convex hull of nodes `1, ..., n-1`, producing a
-    triangulation of the convex hull of nodes `1, ..., n`.
+    Adds a node to a triangulation of the convex hull of nodes `0, ..., n-2`, producing a
+    triangulation of the convex hull of nodes `0, ..., n-1`.
 
     The algorithm consists of the following steps: node `n` is located relative to the
     triangulation ([find]), its index is added to the data structure ([intadd] or [bdyadd]), and a sequence of swaps ([swptst] and [swap]) are applied to the arcs opposite `n` so that all arcs incident on node `n` and opposite node `n` are locally optimal (statisfy the circumcircle test).
 
-    Thus, if a Delaunay triangulation of nodes `1` through `n-1` is input, a Delaunay
-    triangulation of nodes `1` through `n` will be output.
+    Thus, if a Delaunay triangulation of nodes `0` through `n - 2` is input, a Delaunay
+    triangulation of nodes `0` through `n - 1` will be output.
 
     # Arguments
     * `start_node`: The index of a node in which [`find`] begins its search.
@@ -189,7 +212,7 @@ impl DelaunayTriangulation {
      */
     pub fn add_node(
         &mut self,
-        start_node: i32,
+        start_node: usize,
         p: impl for<'a> Into<&'a [f64; 3]>,
     ) -> Result<(), AddNodeError> {
         let k = self.n + 1;
@@ -206,10 +229,12 @@ impl DelaunayTriangulation {
         let mut ier = 0i32;
         let k = i32::try_from(k)
             .unwrap_or_else(|_| panic!("The new number of nodes must be less than {}", i32::MAX));
+        let start_node_idx = i32::try_from(start_node + 1)
+            .unwrap_or_else(|_| panic!("expected start_node to be less than {}", i32::MAX));
 
         unsafe {
             addnod(
-                &raw const start_node,
+                &raw const start_node_idx,
                 &raw const k,
                 self.x.as_ptr(),
                 self.y.as_ptr(),
@@ -234,7 +259,7 @@ impl DelaunayTriangulation {
     /**
     Returns the boundary nodes of a triangulation.
 
-    Given a triangulation of `n` nodes on the unit sphere, this method returns an array containing the indexes (if any) of the counterclockwise sequence of boundary nodes, that is, the nodes on the boundary of the convex hull of the set of nodes. The boundary is empty if the ndoes do not lie on a single hemisphere. The numbers of boundary nodes, arcs, and triangles are also returned.
+    Given a triangulation of `n` nodes on the unit sphere, this method returns an array containing the indexes (if any) of the counterclockwise sequence of boundary nodes, that is, the nodes on the boundary of the convex hull of the set of nodes. The boundary is empty if the nodes do not lie on a single hemisphere. The numbers of boundary nodes, arcs, and triangles are also returned.
 
     # Panics
     * If the number of nodes, arcs, or triangles in the `DelaunayTriangluation` is set to a value less than 0.
@@ -264,6 +289,14 @@ impl DelaunayTriangulation {
             .expect("number of boundary nodes to be greater than or equal to zero");
 
         nodes.resize(num_nodes, 0);
+        let nodes = nodes
+            .into_iter()
+            .map(|x| {
+                usize::try_from(x - 1).unwrap_or_else(|_| {
+                    panic!("Expected index to be greater than or equal to zero")
+                })
+            })
+            .collect();
 
         BoundaryInfo {
             nodes,
@@ -272,6 +305,84 @@ impl DelaunayTriangulation {
             num_triangles: usize::try_from(nt)
                 .expect("number of triangles to be greater than or equal to zero"),
         }
+    }
+
+    /**
+    Deletes a node from a triangulation.
+
+    This method deletes node `node_index` (along with all arcs incident on node `node_index`) from a triangulation of `n` nodes on the unit sphere, and inserts arcs as necessary to produce a triangulation of the remaining `n - 1` nodes. If a Delaunay triangulation is input, a Delaunay triangulation will be the result, and thus [`delete_node`] reverses the effect of a call to [`add_node`].
+
+    Note that the deletion may result in all remaining nodes being collinear. This situation is not flagged.
+
+    # Arguments
+
+    * `node_index` - The index (for `x`, `y`, and `z`) of the node to be deleted. `0 <= node_index < n`.
+
+    # Errors
+
+    * If `node_idx` is invalid
+    * If not enough space can be reserved for reporting the new arcs
+    * If the triangulation is invalid
+    * If `node_index` indexes an interior node with four or more neighbors, none of which can be
+      swapped out due to collinearity, and `node_index` cannot therefore be deleted.
+    * If optimization produces an error
+
+    # Panics
+    * If `n` > [`i32::MAX`]
+    * If `node_idx` > [`i32::MAX`]
+    * If `n < 0`
+    */
+    pub fn delete_node(&mut self, node_idx: usize) -> Result<(), DeleteNodeError> {
+        let mut n = i32::try_from(self.n)
+            .unwrap_or_else(|_| panic!("expected n to be less than {}", i32::MAX));
+
+        //TODO: Calculate the correct value using nnb - 3, where nnb is the number of
+        //neighbors of node k, including an extra pseudo-node if k is a boundary node.
+        let mut lwk = n;
+        let mut iwk = vec![0i32; 2 * self.n];
+        let mut ier = 0i32;
+        let k = i32::try_from(node_idx + 1)
+            .unwrap_or_else(|_| panic!("expected node_idx to be less than {}", i32::MAX));
+
+        unsafe {
+            delnod(
+                &raw const k,
+                &raw mut n,
+                self.x.as_mut_ptr(),
+                self.y.as_mut_ptr(),
+                self.z.as_mut_ptr(),
+                self.list.as_mut_ptr(),
+                self.lptr.as_mut_ptr(),
+                self.lend.as_mut_ptr(),
+                &raw mut self.lnew,
+                &raw mut lwk,
+                iwk.as_mut_ptr(),
+                &raw mut ier,
+            );
+        };
+
+        match ier {
+            1 => return Err(DeleteNodeError::InvalidNodeIndex),
+            2 => return Err(DeleteNodeError::NotEnoughSpace),
+            3 => return Err(DeleteNodeError::InvalidTriangulation),
+            4 => return Err(DeleteNodeError::Collinear),
+            5 => return Err(DeleteNodeError::OptimizationError),
+            _ => {}
+        }
+
+        self.n = usize::try_from(n)
+            .unwrap_or_else(|_| panic!("expected n to be greater than or equal to zero"));
+
+        self.x.resize(self.n, 0.0);
+        self.y.resize(self.n, 0.0);
+        self.z.resize(self.n, 0.0);
+        self.lend.resize(self.n, 0);
+
+        let new_size = 6 * (self.n - 2);
+        self.list.resize(new_size, 0);
+        self.lptr.resize(new_size, 0);
+
+        Ok(())
     }
 }
 
