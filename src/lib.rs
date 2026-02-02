@@ -1,4 +1,4 @@
-use stripack_sys::ffi::{addnod, trmesh};
+use stripack_sys::ffi::{addnod, bnodes, circum, trmesh};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -19,6 +19,23 @@ pub enum AddNodeError {
     InvalidIndex,
     #[error("All nodes are collinear")]
     CollinearNodes,
+}
+
+#[derive(Debug, Error)]
+pub enum CircumcenterError {
+    #[error("All coordinates are collinear")]
+    Collinear,
+}
+
+/// The boundary nodes for a triangulation.
+pub struct BoundaryInfo {
+    /// Ordered sequence of boundary node indexes (counterclockwise)
+    /// Empty if nodes don't lie in a single hemisphere
+    pub nodes: Vec<i32>,
+    /// The number of arcs in the triangulation
+    pub num_arcs: usize,
+    /// The number of triangles in the triangulation
+    pub num_triangles: usize,
 }
 
 /**
@@ -213,4 +230,121 @@ impl DelaunayTriangulation {
 
         Ok(())
     }
+
+    /**
+    Returns the boundary nodes of a triangulation.
+
+    Given a triangulation of `n` nodes on the unit sphere, this method returns an array containing the indexes (if any) of the counterclockwise sequence of boundary nodes, that is, the nodes on the boundary of the convex hull of the set of nodes. The boundary is empty if the ndoes do not lie on a single hemisphere. The numbers of boundary nodes, arcs, and triangles are also returned.
+
+    # Panics
+    * If the number of nodes, arcs, or triangles in the `DelaunayTriangluation` is set to a value less than 0.
+    */
+    #[must_use]
+    pub fn boundary_nodes(&self) -> BoundaryInfo {
+        let n = i32::try_from(self.n)
+            .unwrap_or_else(|_| panic!("expected number of nodes to be less than {}", i32::MAX));
+        let mut nodes = vec![0i32; self.n];
+        let mut nb = 0i32;
+        let mut na = 0i32;
+        let mut nt = 0i32;
+        unsafe {
+            bnodes(
+                &raw const n,
+                self.list.as_ptr(),
+                self.lptr.as_ptr(),
+                self.lend.as_ptr(),
+                nodes.as_mut_ptr(),
+                &raw mut nb,
+                &raw mut na,
+                &raw mut nt,
+            );
+        }
+
+        let num_nodes = usize::try_from(nb)
+            .expect("number of boundary nodes to be greater than or equal to zero");
+
+        nodes.resize(num_nodes, 0);
+
+        BoundaryInfo {
+            nodes,
+            num_arcs: usize::try_from(na)
+                .expect("number of arcs to be greater than or equal to zero"),
+            num_triangles: usize::try_from(nt)
+                .expect("number of triangles to be greater than or equal to zero"),
+        }
+    }
+}
+
+/// Computes the arc cosine with input truncated in the range `[-1, 1]`.
+#[must_use]
+pub fn arc_cosine(c: f64) -> f64 {
+    unsafe { stripack_sys::ffi::arc_cosine(&raw const c) }
+}
+
+/**
+Computes the areas of a spherical triangle on the unit sphere.
+
+# Arguments
+
+* `v1`, `v2`, `v3` - The Cartesian coordinates of unit vectors (the three triangle vertices in any
+  order). These vectors, if nonzero, are implicitly scaled to have length `1`.
+
+# Returns
+
+The area of the spherical triangle defined by `v1`, `v2`, and `v3`, in the range `[0, 2 * PI]` (the area of a hemisphere). `0` if and only if `v1`, `v2`, and `v3` lie in (or close to) a plane containing the origin.
+*/
+pub fn areas<'a, 'b, 'c>(
+    v1: impl Into<&'a [f64; 3]>,
+    v2: impl Into<&'b [f64; 3]>,
+    v3: impl Into<&'c [f64; 3]>,
+) -> f64 {
+    let v1 = v1.into();
+    let v2 = v2.into();
+    let v3 = v3.into();
+
+    unsafe { stripack_sys::ffi::areas(v1.as_ptr(), v2.as_ptr(), v3.as_ptr()) }
+}
+
+/**
+Returns the circumcenter of a spherical triangle.
+
+Returns the circumcenter of a spherical triangle on the unit sphere: the point on the sphere surface that is equally distant from the three triangle vertices and lies in the same hemisphere, where distance is taken to be arc-length on the sphere surface.
+
+# Arguments
+
+* `v1`, `v2`, `v3` - The coordinates of teh three triangle vertices (unit vectors) in
+  counterclockwise order.
+
+# Returns
+The coordinates of the circumcenter. `c = (v2 - v1) X (v3 - v1)` normalized to a unit vector.
+
+# Errors
+
+* If `v1`, `v2`, and `v3` are collinear.
+*/
+pub fn circumcenter<'a, 'b, 'c>(
+    v1: impl Into<&'a [f64; 3]>,
+    v2: impl Into<&'b [f64; 3]>,
+    v3: impl Into<&'c [f64; 3]>,
+) -> Result<[f64; 3], CircumcenterError> {
+    let v1 = v1.into();
+    let v2 = v2.into();
+    let v3 = v3.into();
+    let mut c = [0.0f64; 3];
+    let mut ier = 0i32;
+    unsafe {
+        circum(
+            v1.as_ptr(),
+            v2.as_ptr(),
+            v3.as_ptr(),
+            c.as_mut_ptr(),
+            &raw mut ier,
+        );
+    }
+
+    if ier == 1 {
+        return Err(CircumcenterError::Collinear);
+    }
+
+    Ok(c)
 }
