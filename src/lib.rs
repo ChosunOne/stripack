@@ -1,5 +1,5 @@
 use stripack_sys::ffi::{
-    addnod, bnodes, circum, delnod, nbcnt, nearnd, scoord, trans, trfind, trmesh,
+    addnod, bnodes, circum, delnod, nbcnt, nearnd, scoord, trans, trfind, trlist, trmesh,
 };
 use thiserror::Error;
 
@@ -47,6 +47,12 @@ pub enum DeleteNodeError {
 
 #[derive(Debug, Error)]
 pub enum NearestNodeError {
+    #[error("Invalid or corrupt triangulation")]
+    InvalidTriangulation,
+}
+
+#[derive(Debug, Error)]
+pub enum TriangleMeshError {
     #[error("Invalid or corrupt triangulation")]
     InvalidTriangulation,
 }
@@ -109,6 +115,13 @@ pub struct SphericalCoordinates {
     pub longitude: f64,
     /// The magnitude (Euclidean norm) of `p`
     pub norm: f64,
+}
+
+pub struct MeshData {
+    pub positions: Vec<[f64; 3]>,
+    pub indices: Vec<usize>,
+    pub arc_indices: Vec<[usize; 3]>,
+    pub neighbors: Vec<[Option<usize>; 3]>,
 }
 
 /**
@@ -430,6 +443,114 @@ impl DelaunayTriangulation {
                 bounding_triangle_indices: [(i1 - 1), (i2 - 1), (i3 - 1)],
             },
         }
+    }
+
+    /**
+    Get the triangle list from the triangulation.
+
+    # Returns
+    The [`MeshData`] containing the triangle list, positions, neighbors, and arcs.
+
+    # Errors
+    If the [`DelaunayTriangulation`] is corrupt.
+
+    # Panics
+    If the result from [`trlist`] has negative values.
+    */
+    pub fn triangle_mesh(&self) -> Result<MeshData, TriangleMeshError> {
+        let n = i32::try_from(self.n)
+            .unwrap_or_else(|_| panic!("number of nodes to be less than {}", i32::MAX));
+        let nrow = 9;
+        let mut nt = 0;
+        let mut ier = 0;
+        let max_triangles = 2 * self.n - 4;
+        let mut ltri = vec![0i32; (nrow as usize) * max_triangles];
+        unsafe {
+            trlist(
+                &raw const n,
+                self.list.as_ptr(),
+                self.lptr.as_ptr(),
+                self.lend.as_ptr(),
+                &raw const nrow,
+                &raw mut nt,
+                ltri.as_mut_ptr(),
+                &raw mut ier,
+            );
+        };
+
+        if ier == 2 {
+            return Err(TriangleMeshError::InvalidTriangulation);
+        }
+
+        let mut positions = Vec::with_capacity(self.n);
+        for i in 0..self.n {
+            positions.push([self.x[i], self.y[i], self.z[i]]);
+        }
+        let triangle_count = usize::try_from(nt).unwrap_or_else(|_| {
+            panic!("expected number of triangles to be greater than or equal to zero")
+        });
+
+        let mut indices = Vec::with_capacity(triangle_count * 3);
+        let mut arc_indices = Vec::with_capacity(triangle_count);
+        let mut neighbors = Vec::with_capacity(triangle_count);
+
+        for t in 0..triangle_count {
+            let v1 = usize::try_from(ltri[t * nrow as usize] - 1).unwrap_or_else(|_| {
+                panic!("expected index in triangle list to be greater than or equal to zero")
+            });
+            let v2 = usize::try_from(ltri[1 + t * nrow as usize] - 1).unwrap_or_else(|_| {
+                panic!("expected index in triangle list to be greater than or equal to zero")
+            });
+            let v3 = usize::try_from(ltri[2 + t * nrow as usize] - 1).unwrap_or_else(|_| {
+                panic!("expected index in triangle list to be greater than or equal to zero")
+            });
+
+            indices.push(v1);
+            indices.push(v2);
+            indices.push(v3);
+
+            let n1 = usize::try_from(ltri[3 + t * nrow as usize]).unwrap_or_else(|_| {
+                panic!("expected index in triangle list to be greater than or equal to zero")
+            });
+            let n2 = usize::try_from(ltri[4 + t * nrow as usize]).unwrap_or_else(|_| {
+                panic!("expected index in triangle list to be greater than or equal to zero")
+            });
+            let n3 = usize::try_from(ltri[5 + t * nrow as usize]).unwrap_or_else(|_| {
+                panic!("expected index in triangle list to be greater than or equal to zero")
+            });
+
+            let mut tri_neighbors = [None; 3];
+            if n1 > 0 {
+                tri_neighbors[0] = Some(n1 - 1);
+            }
+            if n2 > 0 {
+                tri_neighbors[1] = Some(n2 - 1);
+            }
+            if n3 > 0 {
+                tri_neighbors[2] = Some(n3 - 1);
+            }
+
+            neighbors.push(tri_neighbors);
+
+            let a1 = usize::try_from(ltri[6 + t * nrow as usize] - 1).unwrap_or_else(|_| {
+                panic!("expected index in triangle_list to be greater than or equal to zero")
+            });
+            let a2 = usize::try_from(ltri[7 + t * nrow as usize] - 1).unwrap_or_else(|_| {
+                panic!("expected index in triangle_list to be greater than or equal to zero")
+            });
+            let a3 = usize::try_from(ltri[8 + t * nrow as usize] - 1).unwrap_or_else(|_| {
+                panic!("expected index in triangle_list to be greater than or equal to zero")
+            });
+
+            arc_indices.push([a1, a2, a3]);
+        }
+
+        Ok(MeshData {
+            positions,
+            indices,
+            arc_indices,
+            neighbors,
+        })
     }
 
     /**
