@@ -1,4 +1,6 @@
-use stripack_sys::ffi::{addnod, bnodes, circum, delnod, trmesh};
+use stripack_sys::ffi::{
+    addnod, bnodes, circum, delnod, nbcnt, nearnd, scoord, trans, trfind, trmesh,
+};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -43,6 +45,12 @@ pub enum DeleteNodeError {
     OptimizationError,
 }
 
+#[derive(Debug, Error)]
+pub enum NearestNodeError {
+    #[error("Invalid or corrupt triangulation")]
+    InvalidTriangulation,
+}
+
 /// The boundary nodes for a triangulation.
 #[derive(Debug, Clone)]
 pub struct BoundaryInfo {
@@ -56,9 +64,51 @@ pub struct BoundaryInfo {
 }
 
 #[derive(Debug, Clone)]
+pub enum LocationInfo {
+    InsideTriangle {
+        /**
+        The unnormalized barycentric coordinates of the central projection of `p` onto the
+        underlying planar triangle if `p` is in the convex hull of the nodes.
+        */
+        barycentric_coords: [f64; 3],
+        /**
+        The counterclockwise-ordered vertex indices of a triangle containing `p` if `p` is contained
+        in a triangle.
+        */
+        bounding_triangle_indices: [usize; 3],
+    },
+    ///The rightmost and leftmost (boundary) nodes that are visible from `p`
+    OutsideConvexHull {
+        leftmost_visible_index: usize,
+        rightmost_visible_index: usize,
+    },
+    ///All nodes are coplanar
+    Coplanar,
+}
+
+#[derive(Debug, Clone)]
 pub struct NodeDeletionInfo {
     /// The indexes of the endpoints of the new arcs added.
     pub new_arc_endpoints: Vec<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NearestNode {
+    /// The index of the nearest node to `p`.
+    pub index: usize,
+    /// The arc length between `p` and the node given by `index`. Because both points are on the
+    /// unit sphere, this is also the angular separation in radians.
+    pub arc_length: f64,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct SphericalCoordinates {
+    /// The latitude in the range `[-PI/2, PI/2]`, or `0` if `norm = 0`.
+    pub latitude: f64,
+    /// The longitude in the range `[-PI, PI]`, or `0` if the point lies on the Z-axis.
+    pub longitude: f64,
+    /// The magnitude (Euclidean norm) of `p`
+    pub norm: f64,
 }
 
 /**
@@ -308,9 +358,84 @@ impl DelaunayTriangulation {
     }
 
     /**
+    Locates a point relative to a triangulation.
+
+    This method locates a point `p` relative to a [`DelaunayTriangulation`]. If `p` is contained in a triangle, the three vertex indices and barycentric coordinates are returned. Otherwise, the indices of the visible boundary nodes are returned.
+
+    # Arguments:
+    * `start_node` - The index of a node at which [`find`] begins its search. Search time depends on
+      the proximity of this node to `p`.
+    * `p` - The `x`, `y`, and `z` coordinates (in that order) of the point `p` to be located.
+
+    # Returns
+    The [`LocationInfo`] of the point relative to the triangulation.
+
+    # Panics
+    * If the start node is greater than [`i32::MAX`].
+    * If the triangulation is invalid.
+    */
+    pub fn find<'a>(&self, start_node: usize, p: impl Into<&'a [f64; 3]>) -> LocationInfo {
+        let p = p.into();
+        let nst = i32::try_from(start_node + 1)
+            .unwrap_or_else(|_| panic!("Expected start_node to be less than {}", i32::MAX));
+
+        let mut b1 = 0.0f64;
+        let mut b2 = 0.0f64;
+        let mut b3 = 0.0f64;
+        let mut i1 = 0i32;
+        let mut i2 = 0i32;
+        let mut i3 = 0i32;
+        let n = i32::try_from(self.n).unwrap_or_else(|_| {
+            panic!(
+                "expected number of nodes in triangulation to be less than {}",
+                i32::MAX
+            )
+        });
+
+        unsafe {
+            trfind(
+                &raw const nst,
+                p.as_ptr(),
+                &raw const n,
+                self.x.as_ptr(),
+                self.y.as_ptr(),
+                self.z.as_ptr(),
+                self.list.as_ptr(),
+                self.lptr.as_ptr(),
+                self.lend.as_ptr(),
+                &raw mut b1,
+                &raw mut b2,
+                &raw mut b3,
+                &raw mut i1,
+                &raw mut i2,
+                &raw mut i3,
+            );
+        };
+
+        let i1 = usize::try_from(i1)
+            .unwrap_or_else(|_| panic!("expected i1 to be greater than or equal to zero"));
+        let i2 = usize::try_from(i2)
+            .unwrap_or_else(|_| panic!("expected i1 to be greater than or equal to zero"));
+        let i3 = usize::try_from(i3)
+            .unwrap_or_else(|_| panic!("expected i1 to be greater than or equal to zero"));
+
+        match (i1, i2, i3) {
+            (0, 0, 0) => LocationInfo::Coplanar,
+            (_, _, 0) => LocationInfo::OutsideConvexHull {
+                leftmost_visible_index: (i1 - 1),
+                rightmost_visible_index: (i2 - 1),
+            },
+            _ => LocationInfo::InsideTriangle {
+                barycentric_coords: [b1, b2, b3],
+                bounding_triangle_indices: [(i1 - 1), (i2 - 1), (i3 - 1)],
+            },
+        }
+    }
+
+    /**
     Deletes a node from a triangulation.
 
-    This method deletes node `node_index` (along with all arcs incident on node `node_index`) from a triangulation of `n` nodes on the unit sphere, and inserts arcs as necessary to produce a triangulation of the remaining `n - 1` nodes. If a Delaunay triangulation is input, a Delaunay triangulation will be the result, and thus [`delete_node`] reverses the effect of a call to [`add_node`].
+    This method deletes node `node_index` (along with all arcs incident on node `node_index`) from a triangulation of `n` nodes on the unit sphere, and inserts arcs as necessary to produce a triangulation of the remaining `n - 1` nodes. If a Delaunay triangulation is input, a Delaunay triangulation will be the result, and thus [`remove_node`] reverses the effect of a call to [`add_node`].
 
     Note that the deletion may result in all remaining nodes being collinear. This situation is not flagged.
 
@@ -332,14 +457,20 @@ impl DelaunayTriangulation {
     * If `node_idx` > [`i32::MAX`]
     * If `n < 0`
     */
-    pub fn delete_node(&mut self, node_idx: usize) -> Result<(), DeleteNodeError> {
+    pub fn remove_node(&mut self, node_idx: usize) -> Result<(), DeleteNodeError> {
         let mut n = i32::try_from(self.n)
             .unwrap_or_else(|_| panic!("expected n to be less than {}", i32::MAX));
 
-        //TODO: Calculate the correct value using nnb - 3, where nnb is the number of
-        //neighbors of node k, including an extra pseudo-node if k is a boundary node.
-        let mut lwk = n;
-        let mut iwk = vec![0i32; 2 * self.n];
+        let neighbors = self.neighbor_count(node_idx);
+        let lwk = if self.is_boundary(node_idx) {
+            neighbors + 1 - 3
+        } else {
+            neighbors - 3
+        };
+
+        let mut iwk = vec![0i32; 2 * lwk];
+        let mut lwk = i32::try_from(lwk)
+            .unwrap_or_else(|_| panic!("expected lwk to be less than {}", i32::MAX));
         let mut ier = 0i32;
         let k = i32::try_from(node_idx + 1)
             .unwrap_or_else(|_| panic!("expected node_idx to be less than {}", i32::MAX));
@@ -383,6 +514,115 @@ impl DelaunayTriangulation {
         self.lptr.resize(new_size, 0);
 
         Ok(())
+    }
+
+    /**
+    Returns the nearest node to a given point.
+
+    Given a point `p` on the surface of the unit sphere and a [`DelaunayTriangulation`], this method returns the index of the nearest triangulation node to `p`.
+
+    The algorithm consists of implicitly adding `p` to the triangulation, finding the nearest neighbor to `p`, and implicitly deleting `p` from the triangulation. Thus, it is based on the fact that, if `p` is a node in a Delaunay triangulation, the nearest node to `p` is a neighbor of `p`.
+
+    For large values of `n`, this procedure will be faster than the naive approach of computing the distance from `p` to every node.
+
+    Note that the number of candidates for [`nearest_node`] (neighbors of `p`) is limited to `25`.
+
+    # Arguments
+
+    * `p` - The Cartesian coordinates of the point `p` to be located relative to the
+      triangulation. It is assumed that `p[0]**2 + p[1]**2 + p[2]**2 = 1`, that is, that the point lies on the unit sphere.
+    * `start_node` - The index of the node at which the search is to begin. The search time depends on the proximity of this node to `p`. If no good candidate is known, any value
+      between `0` and `n` will do.
+
+    # Returns
+    A [`NearestNode`] struct which contains the index of the nearest node to `p`, and the arc length between `p` and the closest node.
+
+    # Errors
+    * If the triangulation has less than three nodes or is invalid.
+
+    # Panics
+    * If the triangulation is invalid
+    * If the number of nodes is greater than [`i32::MAX`].
+     */
+    pub fn nearest_node<'a>(
+        &self,
+        p: impl Into<&'a [f64; 3]>,
+        start_node: usize,
+    ) -> Result<NearestNode, NearestNodeError> {
+        if self.n < 3 {
+            return Err(NearestNodeError::InvalidTriangulation);
+        }
+        let p = p.into();
+        let n = i32::try_from(self.n)
+            .unwrap_or_else(|_| panic!("expected n to be less than {}", i32::MAX));
+        let ist = i32::try_from(start_node + 1)
+            .unwrap_or_else(|_| panic!("expected ist to be less than {}", i32::MAX));
+        let mut al = 0.0;
+        let index = unsafe {
+            nearnd(
+                p.as_ptr(),
+                &raw const ist,
+                &raw const n,
+                self.x.as_ptr(),
+                self.y.as_ptr(),
+                self.z.as_ptr(),
+                self.list.as_ptr(),
+                self.lptr.as_ptr(),
+                self.lend.as_ptr(),
+                &raw mut al,
+            )
+        };
+
+        Ok(NearestNode {
+            index: usize::try_from(index - 1)
+                .unwrap_or_else(|_| panic!("expected index to be greater than 0")),
+            arc_length: al,
+        })
+    }
+
+    /**
+    Returns the number of neighbors of a node.
+
+    This function returns the number of neighbors of a node `node_idx` in a [`DelaunayTriangulation`].
+
+    The number of neighbors also gives the order of the Voronoi polygon containing the point. Thus, a neighbor count of `6` means the node is contained in a `6`-sided Voronoi region.
+
+    This function is identical to the similarly named function in TRIPACK.
+
+    # Arguments
+
+    * `node_idx` - Index of the node of which to count neighbors.
+
+    # Returns
+
+    The number of neighbors of `node_idx`.
+
+    # Panics
+
+    * If the count of neighbors is less than zero.
+     */
+    #[must_use]
+    pub fn neighbor_count(&self, node_idx: usize) -> usize {
+        let lpl = self.lend[node_idx];
+        unsafe { nbcnt(&raw const lpl, self.lptr.as_ptr()) }
+            .try_into()
+            .unwrap_or_else(|_| panic!("expected count to be greater than or equal to 0"))
+    }
+
+    fn is_boundary(&self, node_idx: usize) -> bool {
+        let mut lp = (self.lend[node_idx] - 1) as usize;
+        loop {
+            let neighbor = self.list[lp];
+            if neighbor < 0 {
+                return true;
+            }
+            if (neighbor - 1) as usize == node_idx {
+                break;
+            }
+            lp = self.lptr[lp] as usize;
+        }
+
+        false
     }
 }
 
@@ -458,4 +698,84 @@ pub fn circumcenter<'a, 'b, 'c>(
     }
 
     Ok(c)
+}
+
+/// Converts from Cartesian to spherical coordinates (latitude, longitude, radius).
+pub fn spherical_coordinates<'a>(p: impl Into<&'a [f64; 3]>) -> SphericalCoordinates {
+    let p = p.into();
+    let mut plat = 0.0;
+    let mut plon = 0.0;
+    let mut pnrm = 0.0;
+    unsafe {
+        scoord(
+            &raw const p[0],
+            &raw const p[1],
+            &raw const p[2],
+            &raw mut plat,
+            &raw mut plon,
+            &raw mut pnrm,
+        );
+    };
+
+    SphericalCoordinates {
+        latitude: plat,
+        longitude: plon,
+        norm: pnrm,
+    }
+}
+
+/**
+Transform spherical coordinates into Cartesian coordinates.
+
+# Arguments
+* `latitudes` - The latitudes of the nodes in radians.
+* `longitudes` - The longitudes of the nodes in radians.
+
+# Returns
+A vector of the transformed spherical coordinates in the range `[-1, 1]`. `x**2 + y**2 + z**2 = 1`.
+
+# Panics
+* If latitudes and longitudes do not have the same length.
+* If the number of latitudes or longitudes is greater than [`i32::MAX`].
+*/
+pub fn cartesian_coordinates<'a, 'b>(
+    latitudes: impl Into<&'a [f64]>,
+    longitudes: impl Into<&'b [f64]>,
+) -> Vec<[f64; 3]> {
+    let latitudes = latitudes.into();
+    let longitudes = longitudes.into();
+    assert_eq!(
+        latitudes.len(),
+        longitudes.len(),
+        "latitudes and longitudes must have the same length."
+    );
+
+    let size = latitudes.len();
+    let mut x = vec![0.0; size];
+    let mut y = vec![0.0; size];
+    let mut z = vec![0.0; size];
+    let n = i32::try_from(size).unwrap_or_else(|_| {
+        panic!(
+            "expected length of latitudes or longitudes to be less than {}",
+            i32::MAX
+        )
+    });
+
+    unsafe {
+        trans(
+            &raw const n,
+            latitudes.as_ptr(),
+            longitudes.as_ptr(),
+            x.as_mut_ptr(),
+            y.as_mut_ptr(),
+            z.as_mut_ptr(),
+        );
+    };
+
+    let mut result = Vec::with_capacity(size);
+    for i in 0..size {
+        result.push([x[i], y[i], z[i]]);
+    }
+
+    result
 }
