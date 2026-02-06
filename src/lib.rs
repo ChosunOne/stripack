@@ -1,5 +1,5 @@
 use stripack_sys::ffi::{
-    addnod, bnodes, circum, delnod, nbcnt, nearnd, scoord, trans, trfind, trlist, trmesh,
+    addnod, bnodes, circum, delnod, getnp, nbcnt, nearnd, scoord, trans, trfind, trlist, trmesh,
 };
 use thiserror::Error;
 
@@ -443,6 +443,69 @@ impl DelaunayTriangulation {
                 bounding_triangle_indices: [(i1 - 1), (i2 - 1), (i3 - 1)],
             },
         }
+    }
+
+    /**
+    Gets the `k` nearest nodes to `node_idx`.
+
+    The algorithm uses the property of a Delaunay triangulation that the `k`-th closest node to `node_idx` is a neighbor of one of the `k-1` closest nodes to `node_idx`.
+
+    # Arguments
+
+    * `node_idx` - The index of the node to find the nearest neighbors.
+    * `k` - The number of nearest neighbors to find.
+
+    # Returns
+    A vector of [`NearestNode`] structs.
+
+    # Panics
+    * If the triangulation is invalid.
+    * If the `node_idx` or `k` value is greater than [`i32::MAX`].
+    */
+    #[must_use]
+    pub fn get_nearest_nodes(&self, node_idx: usize, k: usize) -> Vec<NearestNode> {
+        if k == 0 {
+            return vec![];
+        }
+        let mut npts = vec![0i32; k + 1];
+        let mut distances = vec![0.0; k];
+        npts[0] = i32::try_from(node_idx)
+            .unwrap_or_else(|_| panic!("expected node_idx to be less than {}", i32::MAX));
+
+        // NB: Fortran arrays are 1-indexed
+        for i in 2..=k + 1 {
+            let l = i32::try_from(i)
+                .unwrap_or_else(|_| panic!("expected i to be less than {}", i32::MAX));
+            let mut df = 0.0f64;
+            let mut ier = 0;
+            unsafe {
+                getnp(
+                    self.x.as_ptr(),
+                    self.y.as_ptr(),
+                    self.z.as_ptr(),
+                    self.list.as_ptr(),
+                    self.lptr.as_ptr(),
+                    self.lend.as_ptr(),
+                    &raw const l,
+                    npts.as_mut_ptr(),
+                    &raw mut df,
+                    &raw mut ier,
+                );
+            }
+
+            distances[i - 2] = df;
+        }
+
+        npts.into_iter()
+            .skip(1)
+            .zip(distances)
+            .map(|(index, distance)| NearestNode {
+                index: usize::try_from(index - 1).unwrap_or_else(|_| {
+                    panic!("Expected index to be greater than or equal to zero")
+                }),
+                arc_length: (-distance).acos(),
+            })
+            .collect()
     }
 
     /**
