@@ -827,6 +827,9 @@ impl DelaunayTriangulation {
     * If `n < 0`
     */
     pub fn remove_node(&mut self, node_idx: usize) -> Result<(), DeleteNodeError> {
+        if node_idx >= self.n {
+            return Err(DeleteNodeError::InvalidNodeIndex);
+        }
         let mut n = i32::try_from(self.n)
             .unwrap_or_else(|_| panic!("expected n to be less than {}", i32::MAX));
 
@@ -1080,15 +1083,16 @@ impl DelaunayTriangulation {
 
     fn is_boundary(&self, node_idx: usize) -> bool {
         let mut lp = (self.lend[node_idx] - 1) as usize;
+        let start_lp = lp;
         loop {
             let neighbor = self.list[lp];
             if neighbor < 0 {
                 return true;
             }
-            if (neighbor - 1) as usize == node_idx {
+            lp = (self.lptr[lp] - 1) as usize;
+            if lp == start_lp {
                 break;
             }
-            lp = self.lptr[lp] as usize;
         }
 
         false
@@ -1401,5 +1405,29 @@ mod test {
 
             prop_assert_eq!(total_neighbors, 2 * boundary.num_arcs, "sum of neighbor counts ({}) should equal 2 * arcs ({})", total_neighbors, 2 * boundary.num_arcs);
         }
+
+        #[test]
+        fn test_remove_node_from_tetrahedron(n in 4usize..50) {
+            let (x, y, z) = fibonacci_sphere(n);
+            let mut triangulation =
+                DelaunayTriangulation::new(x, y, z).expect("to make a triangulation");
+            triangulation.remove_node(n - 1).expect("to remove node");
+            assert_eq!(triangulation.n, n - 1);
+
+            for i in 0..n - 1 {
+                assert!(triangulation.get_vertex_pos(i).is_some());
+            }
+        }
+    }
+
+    #[test]
+    fn test_remove_node_rejects_invalid_index() {
+        let (x, y, z) = fibonacci_sphere(4);
+        let mut triangulation =
+            DelaunayTriangulation::new(x, y, z).expect("to make a triangulation");
+        let result = triangulation.remove_node(4);
+        let Err(DeleteNodeError::InvalidNodeIndex) = result else {
+            panic!("unexpected result: {result:?}");
+        };
     }
 }
