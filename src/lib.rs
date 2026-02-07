@@ -1399,7 +1399,7 @@ mod test {
                 total_neighbors += count;
             }
 
-            prop_assert_eq!(total_neighbors, 2 * boundary.num_arcs, "sum of neighbor counts ({}) shoudl equal 2 * arcs ({})", total_neighbors, 2 * boundary.num_arcs);
+            prop_assert_eq!(total_neighbors, 2 * boundary.num_arcs, "sum of neighbor counts ({}) should equal 2 * arcs ({})", total_neighbors, 2 * boundary.num_arcs);
         }
     }
 }
