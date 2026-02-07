@@ -1418,6 +1418,17 @@ mod test {
                 assert!(triangulation.get_vertex_pos(i).is_some());
             }
         }
+
+        #[test]
+        fn test_remove_node_round_trip(n in 4usize..50) {
+            let (x, y, z) = fibonacci_sphere(n);
+            let mut triangulation =
+                DelaunayTriangulation::new(x, y, z).expect("to make a triangulation");
+            let pos = triangulation.get_vertex_pos(n / 2).expect("to get vertex position");
+            triangulation.remove_node(n / 2).expect("to remove node");
+            triangulation.add_node(n / 2, &pos).expect("to add node");
+            assert_eq!(triangulation.get_vertex_pos(n - 1).expect("to get vertex position"), pos);
+        }
     }
 
     #[test]
