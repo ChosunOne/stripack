@@ -1,6 +1,6 @@
 use stripack_sys::ffi::{
-    addnod, bnodes, circum, crlist, delnod, getnp, inside, nbcnt, nearnd, scoord, trans, trfind,
-    trlist, trmesh,
+    addnod, bnodes, circum, crlist, delnod, edge, getnp, inside, nbcnt, nearnd, scoord, trans,
+    trfind, trlist, trmesh,
 };
 use thiserror::Error;
 
@@ -44,6 +44,16 @@ pub enum DeleteNodeError {
     Collinear,
     #[error("optimization error")]
     OptimizationError,
+}
+
+#[derive(Debug, Error)]
+pub enum ForceAdjacentError {
+    #[error("given nodes are identical or invalid")]
+    InvalidNodePair,
+    #[error("cannot make nodes adjacent")]
+    CannotMakeAdjacent,
+    #[error("error in optimization")]
+    OptimError,
 }
 
 #[derive(Debug, Error)]
@@ -474,6 +484,67 @@ impl DelaunayTriangulation {
                 bounding_triangle_indices: [(i1 - 1), (i2 - 1), (i3 - 1)],
             },
         }
+    }
+
+    /**
+    Swaps arcs to force two nodes to be adjacent.
+
+    Given a [`DelaunayTriangulation`] and a pair of nodal indexes, `node_idx_1` and `node_idx_2`, this method will swap arcs as necessary to force `node_idx_1` and `node_idx_2` to be adjacent. Only arcs which intersect `node_idx_1-node_idx-2` are swapped out. The resulting triangulation is as close as possible to a Delaunay triangulation in the sense that all arcs other than `in1-in2` are locally optimal.
+
+    A sequence of calls to [`force_adjacent`] may be used to force the presence of a set of edges defining the boundary of a non-convex and/or multiply connected region, or to introduce barriers into the triangulation. Note that [`get_nearest_nodes`] will not necessarily return closest nodes if the triangulation has been constrained by a call to [`force_adjacent`]. However, this is appropriate in some applications, such as triangle-based interpolation on a nonconvex domain.
+
+    # Arguments
+    * `node_idx_1`, `node_idx_2` - The indexes of nodes defining a pair of nodes to be connected
+      by an arc.
+
+    # Errors
+    * If the two node indexes are identical or not present in the triangulation.
+    * If the two nodes cannot be made to be adjacent
+    * If an error occurred during optimization of the triangulation
+
+    # Panics
+    * If `node_idx_1` or `node_idx_2` are not less than [`i32;:MAX`].
+    * If the [`DelaunayTriangulation`] has less than three nodes.
+     */
+    pub fn force_adjacent(
+        &mut self,
+        node_idx_1: usize,
+        node_idx_2: usize,
+    ) -> Result<(), ForceAdjacentError> {
+        let in1 = i32::try_from(node_idx_1 + 1)
+            .unwrap_or_else(|_| panic!("expected node_idx_1 to be less than {}", i32::MAX));
+        let in2 = i32::try_from(node_idx_2 + 1)
+            .unwrap_or_else(|_| panic!("expected node_idx_2 to be less than {}", i32::MAX));
+        let mut ier = 0;
+
+        let mut lwk = i32::try_from(self.n - 3)
+            .unwrap_or_else(|_| panic!("expected at least three nodes in the triangulation"));
+        let mut iwk = vec![0; 2 * (self.n - 3)];
+
+        unsafe {
+            edge(
+                &raw const in1,
+                &raw const in2,
+                self.x.as_ptr(),
+                self.y.as_ptr(),
+                self.z.as_ptr(),
+                &raw mut lwk,
+                iwk.as_mut_ptr(),
+                self.list.as_mut_ptr(),
+                self.lptr.as_mut_ptr(),
+                self.lend.as_mut_ptr(),
+                &raw mut ier,
+            );
+        }
+
+        match ier {
+            1 => return Err(ForceAdjacentError::InvalidNodePair),
+            3 => return Err(ForceAdjacentError::CannotMakeAdjacent),
+            4 => return Err(ForceAdjacentError::OptimError),
+            _ => {}
+        }
+
+        Ok(())
     }
 
     /**
