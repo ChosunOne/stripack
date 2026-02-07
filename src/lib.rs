@@ -1,6 +1,6 @@
 use stripack_sys::ffi::{
-    addnod, bnodes, circum, crlist, delnod, getnp, nbcnt, nearnd, scoord, trans, trfind, trlist,
-    trmesh,
+    addnod, bnodes, circum, crlist, delnod, getnp, inside, nbcnt, nearnd, scoord, trans, trfind,
+    trlist, trmesh,
 };
 use thiserror::Error;
 
@@ -44,6 +44,16 @@ pub enum DeleteNodeError {
     Collinear,
     #[error("optimization error")]
     OptimizationError,
+}
+
+#[derive(Debug, Error)]
+pub enum InsideError {
+    #[error("the input indexes are invalid")]
+    InvalidIndexList,
+    #[error("the indicated region has a self-intersection")]
+    SelfIntersection,
+    #[error("could not determine whether the point is interior to the indicated region")]
+    ConsistencyFailure,
 }
 
 #[derive(Debug, Error)]
@@ -464,6 +474,86 @@ impl DelaunayTriangulation {
                 bounding_triangle_indices: [(i1 - 1), (i2 - 1), (i3 - 1)],
             },
         }
+    }
+
+    /**
+    Determines if a point is inside a polygonal region.
+
+    This method locates a point `p` relative to a polygonal region on the surface of the unit sphere, returning `true` if and only if `p` is contained in the region. The region is defined by a cyclically ordered sequence of vertices which form a positively-oriented simple closed curve. Adjacent vertices need not be distinct but the curve must not be self-intersecting. Also, while polygon edges are by definition restricted to a single hemisphere, the region is not so restricted. Its interior is the region to the left as the vertices are traversed in order.
+
+    The algorithm consists of selecting a point `q` in the region and then finding all points at which the great circle defined by `p` and `q` intersects the boundary of the region. `p` lies outside the region if and only if there is an even number of intersection points between `q` and `p`. `q` is taken to be a point immediately to the left of a directed boundary edge -- the first one that results in no consistency-check failures.
+
+    If `p` is close to the polygon boundary, the problem is ill-conditioned and the decision may be incorrect. Also, an incorrect decision may result from a poor choice of `q` (if, for example, a boundary edge lies on the great circle defined by `p` and `q`). A more reliable result could be obtained by a sequence of calls to [`is_inside`] with the vertices cyclically permuted before each call (to alter the choice of `q`).
+
+    # Arguments
+    * `p` - The coordinates of the point (unit vector) to be located.
+    * `region_node_idx` - The indexes of a cyclically-ordered (and CCW-ordered) sequence of
+      vertices that define a region. The last vertex is followed by the first.
+
+    # Returns
+    Returns `true` if and only if `p` lies inside the region.
+
+    # Errors
+    * If a value in `region_node_idxs` is invalid.
+    * If there is a self-intersection described by `region_node_idxs`.
+    * If the point is very close to the region boundary
+
+    # Panics
+    * If the number of indices defining the region is greater than [`i32::MAX`].
+    * If any index is greater than [`i32::MAX`].
+     */
+    pub fn is_inside<'a>(
+        &self,
+        p: impl Into<&'a [f64; 3]>,
+        region_node_idxs: &[usize],
+    ) -> Result<bool, InsideError> {
+        let p = p.into();
+        let lv = i32::try_from(region_node_idxs.len()).unwrap_or_else(|_| {
+            panic!(
+                "expected the number of nodes in the region to be less than {}",
+                i32::MAX
+            )
+        });
+        let nv = lv;
+
+        let mut xv = Vec::with_capacity(region_node_idxs.len());
+        let mut yv = Vec::with_capacity(region_node_idxs.len());
+        let mut zv = Vec::with_capacity(region_node_idxs.len());
+        let mut listv = Vec::with_capacity(region_node_idxs.len());
+
+        for &idx in region_node_idxs {
+            xv.push(self.x[idx]);
+            yv.push(self.y[idx]);
+            zv.push(self.z[idx]);
+            listv.push(
+                i32::try_from(idx + 1)
+                    .unwrap_or_else(|_| panic!("expected index to be less than {}", i32::MAX)),
+            );
+        }
+
+        let mut ier = 0;
+
+        let result = unsafe {
+            inside(
+                p.as_ptr(),
+                &raw const lv,
+                xv.as_ptr(),
+                yv.as_ptr(),
+                zv.as_ptr(),
+                &raw const nv,
+                listv.as_ptr(),
+                &raw mut ier,
+            )
+        };
+
+        match ier {
+            2 => return Err(InsideError::InvalidIndexList),
+            3 => return Err(InsideError::SelfIntersection),
+            4 => return Err(InsideError::ConsistencyFailure),
+            _ => {}
+        }
+
+        Ok(result)
     }
 
     /**
