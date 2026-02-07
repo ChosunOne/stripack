@@ -1,60 +1,69 @@
 use stripack_sys::ffi::{
-    addnod, bnodes, circum, delnod, getnp, nbcnt, nearnd, scoord, trans, trfind, trlist, trmesh,
+    addnod, bnodes, circum, crlist, delnod, getnp, nbcnt, nearnd, scoord, trans, trfind, trlist,
+    trmesh,
 };
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum TriangulationError {
-    #[error("Not enough nodes")]
+    #[error("not enough nodes")]
     NotEnoughNodes,
-    #[error("The first three nodes are collinear")]
+    #[error("the first three nodes are collinear")]
     CollinearNodes,
-    #[error("All coordinate inputs must have the same length")]
+    #[error("all coordinate inputs must have the same length")]
     IncorrectNodeCount,
-    #[error("All coordinates must form unit vectors")]
+    #[error("all coordinates must form unit vectors")]
     NotUnitVectors,
 }
 
 #[derive(Debug, Error)]
 pub enum AddNodeError {
-    #[error("Invalid k value")]
+    #[error("invalid k value")]
     InvalidIndex,
-    #[error("All nodes are collinear")]
+    #[error("all nodes are collinear")]
     CollinearNodes,
 }
 
 #[derive(Debug, Error)]
 pub enum CircumcenterError {
-    #[error("All coordinates are collinear")]
+    #[error("all coordinates are collinear")]
     Collinear,
 }
 
 #[derive(Debug, Error)]
 pub enum DeleteNodeError {
-    #[error("Invalid node index")]
+    #[error("invalid node index")]
     InvalidNodeIndex,
-    #[error("Not enough space")]
+    #[error("not enough space")]
     NotEnoughSpace,
-    #[error("Invalid or corrupt triangulation")]
+    #[error("invalid or corrupt triangulation")]
     InvalidTriangulation,
     #[error(
         "node_index indexes an interior node with four or more neighbors, none of which can be swapped out due to collinearity"
     )]
     Collinear,
-    #[error("Optimization error")]
+    #[error("optimization error")]
     OptimizationError,
 }
 
 #[derive(Debug, Error)]
 pub enum NearestNodeError {
-    #[error("Invalid or corrupt triangulation")]
+    #[error("invalid or corrupt triangulation")]
     InvalidTriangulation,
 }
 
 #[derive(Debug, Error)]
 pub enum TriangleMeshError {
-    #[error("Invalid or corrupt triangulation")]
+    #[error("invalid or corrupt triangulation")]
     InvalidTriangulation,
+}
+
+#[derive(Debug, Error)]
+pub enum VoronoiCellError {
+    #[error("not enough nodes in the triangulation to produce Voronoi cells")]
+    NotEnoughNodes,
+    #[error("a triangle is degenerate (has vertices lying on a common geodesic)")]
+    DegenerateTriangle,
 }
 
 /// The boundary nodes for a triangulation.
@@ -118,10 +127,22 @@ pub struct SphericalCoordinates {
 }
 
 pub struct MeshData {
+    /// The positions of points on the unit sphere.
     pub positions: Vec<[f64; 3]>,
+    /// The indices of the vertices
     pub indices: Vec<usize>,
+    /// The indices of the edges/arcs between vertices.
     pub arc_indices: Vec<[usize; 3]>,
+    /// The neighbors, if any, of each of the vertices.
     pub neighbors: Vec<[Option<usize>; 3]>,
+}
+
+pub struct VoronoiCell {
+    /// The position of the circumcircle of the triangle.
+    pub position: [f64; 3],
+    /// The circumradii (the arc length or angle between the circumcenter and associated
+    /// triangle vertex).
+    pub radius: f64,
 }
 
 /**
@@ -446,6 +467,70 @@ impl DelaunayTriangulation {
     }
 
     /**
+    Returns the nearest node to a given point.
+
+    Given a point `p` on the surface of the unit sphere and a [`DelaunayTriangulation`], this method returns the index of the nearest triangulation node to `p`.
+
+    The algorithm consists of implicitly adding `p` to the triangulation, finding the nearest neighbor to `p`, and implicitly deleting `p` from the triangulation. Thus, it is based on the fact that, if `p` is a node in a Delaunay triangulation, the nearest node to `p` is a neighbor of `p`.
+
+    For large values of `n`, this procedure will be faster than the naive approach of computing the distance from `p` to every node.
+
+    Note that the number of candidates for [`nearest_node`] (neighbors of `p`) is limited to `25`.
+
+    # Arguments
+
+    * `p` - The Cartesian coordinates of the point `p` to be located relative to the
+      triangulation. It is assumed that `p[0]**2 + p[1]**2 + p[2]**2 = 1`, that is, that the point lies on the unit sphere.
+    * `start_node` - The index of the node at which the search is to begin. The search time depends on the proximity of this node to `p`. If no good candidate is known, any value
+      between `0` and `n` will do.
+
+    # Returns
+    A [`NearestNode`] struct which contains the index of the nearest node to `p`, and the arc length between `p` and the closest node.
+
+    # Errors
+    * If the triangulation has less than three nodes or is invalid.
+
+    # Panics
+    * If the triangulation is invalid
+    * If the number of nodes is greater than [`i32::MAX`].
+     */
+    pub fn nearest_node<'a>(
+        &self,
+        p: impl Into<&'a [f64; 3]>,
+        start_node: usize,
+    ) -> Result<NearestNode, NearestNodeError> {
+        if self.n < 3 {
+            return Err(NearestNodeError::InvalidTriangulation);
+        }
+        let p = p.into();
+        let n = i32::try_from(self.n)
+            .unwrap_or_else(|_| panic!("expected n to be less than {}", i32::MAX));
+        let ist = i32::try_from(start_node + 1)
+            .unwrap_or_else(|_| panic!("expected ist to be less than {}", i32::MAX));
+        let mut al = 0.0;
+        let index = unsafe {
+            nearnd(
+                p.as_ptr(),
+                &raw const ist,
+                &raw const n,
+                self.x.as_ptr(),
+                self.y.as_ptr(),
+                self.z.as_ptr(),
+                self.list.as_ptr(),
+                self.lptr.as_ptr(),
+                self.lend.as_ptr(),
+                &raw mut al,
+            )
+        };
+
+        Ok(NearestNode {
+            index: usize::try_from(index - 1)
+                .unwrap_or_else(|_| panic!("expected index to be greater than 0")),
+            arc_length: al,
+        })
+    }
+
+    /**
     Gets the `k` nearest nodes to `node_idx`.
 
     The algorithm uses the property of a Delaunay triangulation that the `k`-th closest node to `node_idx` is a neighbor of one of the `k-1` closest nodes to `node_idx`.
@@ -463,7 +548,7 @@ impl DelaunayTriangulation {
     * If the `node_idx` or `k` value is greater than [`i32::MAX`].
     */
     #[must_use]
-    pub fn get_nearest_nodes(&self, node_idx: usize, k: usize) -> Vec<NearestNode> {
+    pub fn nearest_nodes(&self, node_idx: usize, k: usize) -> Vec<NearestNode> {
         if k == 0 {
             return vec![];
         }
@@ -506,6 +591,119 @@ impl DelaunayTriangulation {
                 arc_length: (-distance).acos(),
             })
             .collect()
+    }
+
+    /**
+    Returns the number of neighbors of a node.
+
+    This function returns the number of neighbors of a node `node_idx` in a [`DelaunayTriangulation`].
+
+    The number of neighbors also gives the order of the Voronoi polygon containing the point. Thus, a neighbor count of `6` means the node is contained in a `6`-sided Voronoi region.
+
+    This function is identical to the similarly named function in TRIPACK.
+
+    # Arguments
+
+    * `node_idx` - Index of the node of which to count neighbors.
+
+    # Returns
+
+    The number of neighbors of `node_idx`.
+
+    # Panics
+
+    * If the count of neighbors is less than zero.
+     */
+    #[must_use]
+    pub fn neighbor_count(&self, node_idx: usize) -> usize {
+        let lpl = self.lend[node_idx];
+        unsafe { nbcnt(&raw const lpl, self.lptr.as_ptr()) }
+            .try_into()
+            .unwrap_or_else(|_| panic!("expected count to be greater than or equal to 0"))
+    }
+
+    /**
+    Deletes a node from a triangulation.
+
+    This method deletes node `node_index` (along with all arcs incident on node `node_index`) from a triangulation of `n` nodes on the unit sphere, and inserts arcs as necessary to produce a triangulation of the remaining `n - 1` nodes. If a Delaunay triangulation is input, a Delaunay triangulation will be the result, and thus [`remove_node`] reverses the effect of a call to [`add_node`].
+
+    Note that the deletion may result in all remaining nodes being collinear. This situation is not flagged.
+
+    # Arguments
+
+    * `node_index` - The index (for `x`, `y`, and `z`) of the node to be deleted. `0 <= node_index < n`.
+
+    # Errors
+
+    * If `node_idx` is invalid
+    * If not enough space can be reserved for reporting the new arcs
+    * If the triangulation is invalid
+    * If `node_index` indexes an interior node with four or more neighbors, none of which can be
+      swapped out due to collinearity, and `node_index` cannot therefore be deleted.
+    * If optimization produces an error
+
+    # Panics
+    * If `n` > [`i32::MAX`]
+    * If `node_idx` > [`i32::MAX`]
+    * If `n < 0`
+    */
+    pub fn remove_node(&mut self, node_idx: usize) -> Result<(), DeleteNodeError> {
+        let mut n = i32::try_from(self.n)
+            .unwrap_or_else(|_| panic!("expected n to be less than {}", i32::MAX));
+
+        let neighbors = self.neighbor_count(node_idx);
+        let lwk = if self.is_boundary(node_idx) {
+            neighbors + 1 - 3
+        } else {
+            neighbors - 3
+        };
+
+        let mut iwk = vec![0i32; 2 * lwk];
+        let mut lwk = i32::try_from(lwk)
+            .unwrap_or_else(|_| panic!("expected lwk to be less than {}", i32::MAX));
+        let mut ier = 0i32;
+        let k = i32::try_from(node_idx + 1)
+            .unwrap_or_else(|_| panic!("expected node_idx to be less than {}", i32::MAX));
+
+        unsafe {
+            delnod(
+                &raw const k,
+                &raw mut n,
+                self.x.as_mut_ptr(),
+                self.y.as_mut_ptr(),
+                self.z.as_mut_ptr(),
+                self.list.as_mut_ptr(),
+                self.lptr.as_mut_ptr(),
+                self.lend.as_mut_ptr(),
+                &raw mut self.lnew,
+                &raw mut lwk,
+                iwk.as_mut_ptr(),
+                &raw mut ier,
+            );
+        };
+
+        match ier {
+            1 => return Err(DeleteNodeError::InvalidNodeIndex),
+            2 => return Err(DeleteNodeError::NotEnoughSpace),
+            3 => return Err(DeleteNodeError::InvalidTriangulation),
+            4 => return Err(DeleteNodeError::Collinear),
+            5 => return Err(DeleteNodeError::OptimizationError),
+            _ => {}
+        }
+
+        self.n = usize::try_from(n)
+            .unwrap_or_else(|_| panic!("expected n to be greater than or equal to zero"));
+
+        self.x.resize(self.n, 0.0);
+        self.y.resize(self.n, 0.0);
+        self.z.resize(self.n, 0.0);
+        self.lend.resize(self.n, 0);
+
+        let new_size = 6 * (self.n - 2);
+        self.list.resize(new_size, 0);
+        self.lptr.resize(new_size, 0);
+
+        Ok(())
     }
 
     /**
@@ -616,181 +814,70 @@ impl DelaunayTriangulation {
         })
     }
 
-    /**
-    Deletes a node from a triangulation.
+    pub fn voronoi_cells(&mut self) -> Result<Vec<VoronoiCell>, VoronoiCellError> {
+        let n = i32::try_from(self.n).unwrap_or_else(|_| {
+            panic!(
+                "expected number of nodes in triangulation to be less than {}",
+                i32::MAX,
+            );
+        });
+        let boundary_nodes = self.boundary_nodes();
+        let ncol = i32::try_from(boundary_nodes.nodes.len().saturating_sub(2).max(1))
+            .unwrap_or_else(|_| {
+                panic!(
+                    "expected the number of boundary nodes to be less than {}",
+                    i32::MAX
+                )
+            });
 
-    This method deletes node `node_index` (along with all arcs incident on node `node_index`) from a triangulation of `n` nodes on the unit sphere, and inserts arcs as necessary to produce a triangulation of the remaining `n - 1` nodes. If a Delaunay triangulation is input, a Delaunay triangulation will be the result, and thus [`remove_node`] reverses the effect of a call to [`add_node`].
-
-    Note that the deletion may result in all remaining nodes being collinear. This situation is not flagged.
-
-    # Arguments
-
-    * `node_index` - The index (for `x`, `y`, and `z`) of the node to be deleted. `0 <= node_index < n`.
-
-    # Errors
-
-    * If `node_idx` is invalid
-    * If not enough space can be reserved for reporting the new arcs
-    * If the triangulation is invalid
-    * If `node_index` indexes an interior node with four or more neighbors, none of which can be
-      swapped out due to collinearity, and `node_index` cannot therefore be deleted.
-    * If optimization produces an error
-
-    # Panics
-    * If `n` > [`i32::MAX`]
-    * If `node_idx` > [`i32::MAX`]
-    * If `n < 0`
-    */
-    pub fn remove_node(&mut self, node_idx: usize) -> Result<(), DeleteNodeError> {
-        let mut n = i32::try_from(self.n)
-            .unwrap_or_else(|_| panic!("expected n to be less than {}", i32::MAX));
-
-        let neighbors = self.neighbor_count(node_idx);
-        let lwk = if self.is_boundary(node_idx) {
-            neighbors + 1 - 3
-        } else {
-            neighbors - 3
-        };
-
-        let mut iwk = vec![0i32; 2 * lwk];
-        let mut lwk = i32::try_from(lwk)
-            .unwrap_or_else(|_| panic!("expected lwk to be less than {}", i32::MAX));
-        let mut ier = 0i32;
-        let k = i32::try_from(node_idx + 1)
-            .unwrap_or_else(|_| panic!("expected node_idx to be less than {}", i32::MAX));
+        let mut ltri = vec![0; 6 * ncol as usize];
+        let nt = 2 * self.n - 4;
+        let mut listc = vec![0; 3 * nt];
+        let mut nb = 0;
+        let mut xc = vec![0.0; nt];
+        let mut yc = vec![0.0; nt];
+        let mut zc = vec![0.0; nt];
+        let mut rc = vec![0.0; nt];
+        let mut ier = 0;
 
         unsafe {
-            delnod(
-                &raw const k,
-                &raw mut n,
-                self.x.as_mut_ptr(),
-                self.y.as_mut_ptr(),
-                self.z.as_mut_ptr(),
-                self.list.as_mut_ptr(),
-                self.lptr.as_mut_ptr(),
-                self.lend.as_mut_ptr(),
-                &raw mut self.lnew,
-                &raw mut lwk,
-                iwk.as_mut_ptr(),
-                &raw mut ier,
-            );
-        };
-
-        match ier {
-            1 => return Err(DeleteNodeError::InvalidNodeIndex),
-            2 => return Err(DeleteNodeError::NotEnoughSpace),
-            3 => return Err(DeleteNodeError::InvalidTriangulation),
-            4 => return Err(DeleteNodeError::Collinear),
-            5 => return Err(DeleteNodeError::OptimizationError),
-            _ => {}
-        }
-
-        self.n = usize::try_from(n)
-            .unwrap_or_else(|_| panic!("expected n to be greater than or equal to zero"));
-
-        self.x.resize(self.n, 0.0);
-        self.y.resize(self.n, 0.0);
-        self.z.resize(self.n, 0.0);
-        self.lend.resize(self.n, 0);
-
-        let new_size = 6 * (self.n - 2);
-        self.list.resize(new_size, 0);
-        self.lptr.resize(new_size, 0);
-
-        Ok(())
-    }
-
-    /**
-    Returns the nearest node to a given point.
-
-    Given a point `p` on the surface of the unit sphere and a [`DelaunayTriangulation`], this method returns the index of the nearest triangulation node to `p`.
-
-    The algorithm consists of implicitly adding `p` to the triangulation, finding the nearest neighbor to `p`, and implicitly deleting `p` from the triangulation. Thus, it is based on the fact that, if `p` is a node in a Delaunay triangulation, the nearest node to `p` is a neighbor of `p`.
-
-    For large values of `n`, this procedure will be faster than the naive approach of computing the distance from `p` to every node.
-
-    Note that the number of candidates for [`nearest_node`] (neighbors of `p`) is limited to `25`.
-
-    # Arguments
-
-    * `p` - The Cartesian coordinates of the point `p` to be located relative to the
-      triangulation. It is assumed that `p[0]**2 + p[1]**2 + p[2]**2 = 1`, that is, that the point lies on the unit sphere.
-    * `start_node` - The index of the node at which the search is to begin. The search time depends on the proximity of this node to `p`. If no good candidate is known, any value
-      between `0` and `n` will do.
-
-    # Returns
-    A [`NearestNode`] struct which contains the index of the nearest node to `p`, and the arc length between `p` and the closest node.
-
-    # Errors
-    * If the triangulation has less than three nodes or is invalid.
-
-    # Panics
-    * If the triangulation is invalid
-    * If the number of nodes is greater than [`i32::MAX`].
-     */
-    pub fn nearest_node<'a>(
-        &self,
-        p: impl Into<&'a [f64; 3]>,
-        start_node: usize,
-    ) -> Result<NearestNode, NearestNodeError> {
-        if self.n < 3 {
-            return Err(NearestNodeError::InvalidTriangulation);
-        }
-        let p = p.into();
-        let n = i32::try_from(self.n)
-            .unwrap_or_else(|_| panic!("expected n to be less than {}", i32::MAX));
-        let ist = i32::try_from(start_node + 1)
-            .unwrap_or_else(|_| panic!("expected ist to be less than {}", i32::MAX));
-        let mut al = 0.0;
-        let index = unsafe {
-            nearnd(
-                p.as_ptr(),
-                &raw const ist,
+            crlist(
                 &raw const n,
+                &raw const ncol,
                 self.x.as_ptr(),
                 self.y.as_ptr(),
                 self.z.as_ptr(),
                 self.list.as_ptr(),
-                self.lptr.as_ptr(),
                 self.lend.as_ptr(),
-                &raw mut al,
-            )
-        };
+                self.lptr.as_mut_ptr(),
+                &raw mut self.lnew,
+                ltri.as_mut_ptr(),
+                listc.as_mut_ptr(),
+                &raw mut nb,
+                xc.as_mut_ptr(),
+                yc.as_mut_ptr(),
+                zc.as_mut_ptr(),
+                rc.as_mut_ptr(),
+                &raw mut ier,
+            );
+        }
 
-        Ok(NearestNode {
-            index: usize::try_from(index - 1)
-                .unwrap_or_else(|_| panic!("expected index to be greater than 0")),
-            arc_length: al,
-        })
-    }
+        match ier {
+            1 => return Err(VoronoiCellError::NotEnoughNodes),
+            3 => return Err(VoronoiCellError::DegenerateTriangle),
+            _ => {}
+        }
 
-    /**
-    Returns the number of neighbors of a node.
+        let mut voronoi_cells = Vec::with_capacity(nt);
 
-    This function returns the number of neighbors of a node `node_idx` in a [`DelaunayTriangulation`].
+        for i in 0..nt {
+            voronoi_cells.push(VoronoiCell {
+                position: [xc[i], yc[i], zc[i]],
+                radius: rc[i],
+            });
+        }
 
-    The number of neighbors also gives the order of the Voronoi polygon containing the point. Thus, a neighbor count of `6` means the node is contained in a `6`-sided Voronoi region.
-
-    This function is identical to the similarly named function in TRIPACK.
-
-    # Arguments
-
-    * `node_idx` - Index of the node of which to count neighbors.
-
-    # Returns
-
-    The number of neighbors of `node_idx`.
-
-    # Panics
-
-    * If the count of neighbors is less than zero.
-     */
-    #[must_use]
-    pub fn neighbor_count(&self, node_idx: usize) -> usize {
-        let lpl = self.lend[node_idx];
-        unsafe { nbcnt(&raw const lpl, self.lptr.as_ptr()) }
-            .try_into()
-            .unwrap_or_else(|_| panic!("expected count to be greater than or equal to 0"))
+        Ok(voronoi_cells)
     }
 
     fn is_boundary(&self, node_idx: usize) -> bool {
