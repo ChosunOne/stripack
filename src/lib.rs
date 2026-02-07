@@ -1256,21 +1256,23 @@ mod test {
     use std::f64::consts::PI;
 
     fn fibonacci_sphere(n: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
-        let phi = f64::midpoint(1.0, 5.0f64.sqrt());
+        let gr = f64::midpoint(1.0, 5.0f64.sqrt());
         let mut x_points = Vec::with_capacity(n);
         let mut y_points = Vec::with_capacity(n);
         let mut z_points = Vec::with_capacity(n);
 
         for i in 0..n {
-            let y = 1.0 - (i as f64 / (n as f64 - 1.0)) * 2.0;
-            let radius = (1.0 - y * y).sqrt();
-            let theta = 2.0 * PI * i as f64 * phi;
-            let x = radius * theta.cos();
-            let z = radius * theta.sin();
+            let theta = 2.0 * PI * i as f64 / gr;
+            let phi = (1.0 - 2.0 * (i as f64 + 0.5) / n as f64).acos();
+            let x = phi.sin() * theta.cos();
+            let y = phi.sin() * theta.sin();
+            let z = phi.cos();
 
-            x_points.push(x);
-            y_points.push(y);
-            z_points.push(z);
+            let norm = (x.powi(2) + y.powi(2) + z.powi(2)).sqrt();
+
+            x_points.push(x / norm);
+            y_points.push(y / norm);
+            z_points.push(z / norm);
         }
 
         (x_points, y_points, z_points)
@@ -1349,22 +1351,55 @@ mod test {
                     x_hemi.push(x[i]);
                     y_hemi.push(y[i]);
                     z_hemi.push(z[i]);
+                    println!("[{}, {}, {}]", x[i], y[i], z[i]);
                 }
             }
 
+            let n_hemi = x_hemi.len();
             let triangulation = DelaunayTriangulation::new(x_hemi, y_hemi, z_hemi).expect("to make a triangulation");
             let boundary = triangulation.boundary_nodes();
             prop_assert!(!boundary.nodes.is_empty());
             prop_assert!(boundary.nodes.len() >= 3);
             let nb = boundary.nodes.len();
-            prop_assert_eq!(boundary.num_triangles, 2 * n - 2 - nb);
-            prop_assert_eq!(boundary.num_arcs, 3 * n - 3 - nb);
+            prop_assert_eq!(boundary.num_triangles, 2 * n_hemi - 2 - nb);
+            prop_assert_eq!(boundary.num_arcs, 3 * n_hemi - 3 - nb);
 
             let sphere_triangulation = DelaunayTriangulation::new(x, y, z).expect("to make a triangulation");
             let sphere_boundary = sphere_triangulation.boundary_nodes();
             prop_assert!(sphere_boundary.nodes.is_empty());
             prop_assert_eq!(sphere_boundary.num_triangles, 2 * n - 4);
             prop_assert_eq!(sphere_boundary.num_arcs, 3 * n - 6);
+        }
+    }
+
+    #[test]
+    fn test_neighbor_count_tetrahedron() {
+        let (x, y, z) = fibonacci_sphere(4);
+        let triangulation = DelaunayTriangulation::new(x, y, z).expect("to make a triangulation");
+
+        for i in 0..4 {
+            let count = triangulation.neighbor_count(i);
+            assert_eq!(count, 3, "expected 3 neighbors, got {count}");
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn test_neighbor_count(n in 5usize..50) {
+            let (x, y, z) = fibonacci_sphere(n);
+            let triangulation = DelaunayTriangulation::new(x, y, z).expect("to make a triangulation");
+
+            let boundary = triangulation.boundary_nodes();
+            let mut total_neighbors = 0;
+            for i in 0..n {
+                let count = triangulation.neighbor_count(i);
+
+                prop_assert!(count >= 3, "node {} only has {} neighbors", i, count);
+                prop_assert!(count < n, "node {} has {} neighbors", i, count);
+                total_neighbors += count;
+            }
+
+            prop_assert_eq!(total_neighbors, 2 * boundary.num_arcs, "sum of neighbor counts ({}) shoudl equal 2 * arcs ({})", total_neighbors, 2 * boundary.num_arcs);
         }
     }
 }
