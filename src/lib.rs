@@ -548,6 +548,24 @@ impl DelaunayTriangulation {
     }
 
     /**
+    Gets the position of the vertex with the given index.
+
+    # Arguments
+    * The nodal index of the vertex.
+
+    # Returns
+    The `x`, `y`, and `z` coordinates of the vertex.
+    */
+    #[must_use]
+    pub fn get_vertex_pos(&self, node_idx: usize) -> Option<[f64; 3]> {
+        let x = self.x.get(node_idx).copied()?;
+        let y = self.y.get(node_idx).copied()?;
+        let z = self.z.get(node_idx).copied()?;
+
+        Some([x, y, z])
+    }
+
+    /**
     Determines if a point is inside a polygonal region.
 
     This method locates a point `p` relative to a polygonal region on the surface of the unit sphere, returning `true` if and only if `p` is contained in the region. The region is defined by a cyclically ordered sequence of vertices which form a positively-oriented simple closed curve. Adjacent vertices need not be distinct but the curve must not be self-intersecting. Also, while polygon edges are by definition restricted to a single hemisphere, the region is not so restricted. Its interior is the region to the left as the vertices are traversed in order.
@@ -1229,4 +1247,40 @@ pub fn cartesian_coordinates<'a, 'b>(
     }
 
     result
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use proptest::prelude::*;
+    use std::f64::consts::PI;
+
+    fn fibonacci_sphere(n: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
+        let phi = f64::midpoint(1.0, 5.0f64.sqrt());
+        let mut x_points = Vec::with_capacity(n);
+        let mut y_points = Vec::with_capacity(n);
+        let mut z_points = Vec::with_capacity(n);
+
+        for i in 0..n {
+            let y = 1.0 - (i as f64 / (n as f64 - 1.0)) * 2.0;
+            let radius = (1.0 - y * y).sqrt();
+            let theta = 2.0 * PI * i as f64 * phi;
+            let x = radius * theta.cos();
+            let z = radius * theta.sin();
+
+            x_points.push(x);
+            y_points.push(y);
+            z_points.push(z);
+        }
+
+        (x_points, y_points, z_points)
+    }
+
+    proptest! {
+        #[test]
+        fn test_creating_delaunay_triangulation(n in 3usize..30) {
+            let (x, y, z) = fibonacci_sphere(n);
+            let triangulation = DelaunayTriangulation::new(x, y, z).expect("to create a triangulation");
+        }
+    }
 }
