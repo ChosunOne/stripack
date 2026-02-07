@@ -314,10 +314,10 @@ impl DelaunayTriangulation {
     # Panics
     * If `index` is greater than [`i32::MAX`].
      */
-    pub fn add_node(
+    pub fn add_node<'a>(
         &mut self,
         start_node: usize,
-        p: impl for<'a> Into<&'a [f64; 3]>,
+        p: impl Into<&'a [f64; 3]>,
     ) -> Result<(), AddNodeError> {
         let k = self.n + 1;
         let p = p.into();
@@ -1280,7 +1280,60 @@ mod test {
         #[test]
         fn test_creating_delaunay_triangulation(n in 3usize..30) {
             let (x, y, z) = fibonacci_sphere(n);
-            let triangulation = DelaunayTriangulation::new(x, y, z).expect("to create a triangulation");
+            let triangulation = DelaunayTriangulation::new(x.clone(), y.clone(), z.clone()).expect("to create a triangulation");
+            for i in 0..n {
+                prop_assert_eq!(triangulation.get_vertex_pos(i).expect("to find position for vertex"), [x[i], y[i], z[i]]);
+            }
         }
+
+        #[test]
+        fn test_creating_delaunay_triangulation_iteratively(n in 3usize..30) {
+            let (x, y, z) = fibonacci_sphere(n);
+            let test_triangulation = DelaunayTriangulation::new(x.clone(), y.clone(), z.clone()).expect("to create a triangulation");
+            let mut triangulation = DelaunayTriangulation::new(vec![], vec![], vec![]).expect("to create a triangulation");
+            for i in 0..n {
+                let position = [x[i], y[i], z[i]];
+                triangulation.add_node(0, &position).expect("to add node");
+                prop_assert_eq!(triangulation.get_vertex_pos(i).expect("to find position for vertex"), position);
+                prop_assert_eq!(triangulation.get_vertex_pos(i).expect("to find position for vertex"), test_triangulation.get_vertex_pos(i).expect("to find position for vertex"));
+            }
+        }
+    }
+
+    #[test]
+    fn test_creating_delaunay_triangulation_rejects_non_unit_vectors() {
+        let triangulation = DelaunayTriangulation::new(vec![2.0], vec![2.0], vec![2.0]);
+        let Err(TriangulationError::NotUnitVectors) = triangulation else {
+            panic!("unexpected result: {triangulation:?}");
+        };
+    }
+
+    #[test]
+    fn test_creating_delaunay_triangulation_rejects_degenerate_triangle() {
+        let triangulation = DelaunayTriangulation::new(
+            vec![1.0, 0.0, -1.0],
+            vec![0.0, 1.0, 0.0],
+            vec![0.0, 0.0, 0.0],
+        );
+        let Err(TriangulationError::CollinearNodes) = triangulation else {
+            panic!("unexpected result: {triangulation:?}");
+        };
+    }
+
+    #[test]
+    fn test_creating_delaunay_triangulation_rejects_mismatched_inputs() {
+        let triangulation = DelaunayTriangulation::new(vec![], vec![0.0], vec![0.0, 0.0]);
+        let Err(TriangulationError::IncorrectNodeCount) = triangulation else {
+            panic!("unexpected result: {triangulation:?}");
+        };
+    }
+
+    #[test]
+    fn test_creating_delaunay_triangulation_rejects_not_enough_nodes() {
+        let (x, y, z) = fibonacci_sphere(2);
+        let triangulation = DelaunayTriangulation::new(x, y, z);
+        let Err(TriangulationError::NotEnoughNodes) = triangulation else {
+            panic!("unexpected result: {triangulation:?}");
+        };
     }
 }
