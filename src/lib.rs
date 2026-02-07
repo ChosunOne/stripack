@@ -814,6 +814,25 @@ impl DelaunayTriangulation {
         })
     }
 
+    /**
+    Returns triangle circumcenters and other information.
+
+    Given a [`DelaunayTriangulation`] of nodes on the surface of a unit sphere, this method returns the set of triangle circumcenters corresponding to Voronoi vertices, along with the circumradii.
+
+    A triangle circumcenter is the point (unit vector) lying at the same angular distance from the three vertices and contained in the same hemisphere as the vertices. (Note that the negative of a circumcenter is also equidistant from the vertices.) If the triangulation covers the surface, the Voronoi vertices are the circumcenters of the triangle in the [`DelaunayTriangulation`]. In this case, the structure is not modified.
+
+    On the other hand, if the nodes are contained in a single hemisphere, the triangulation is implicitly extended to the entire surface by adding pseudo-arcs (of length greater than 180 degrees) between boundary nodes forming pseudo-triangles whose 'circumcenters' are included in the list. This extension of the triangulation actually consists of a triangulation of the set of boundary nodes in which the swap test is reversed (a non-empty circumcircle test). The negative circumcenters are stored as pseudo-triangle 'circumcenters'. The [`DelaunayTriangulation`] is modified to contain this extended triangulation. If it is necessary to save the original structure, it should be cloned prior to calling this method.
+
+    # Returns
+    A [`Vec`] of [`VoronoiCell`] structures.
+
+    # Errors
+    * If there are less than `3` nodes in the triangulation.
+    * If any degenerate triangle is encountered.
+
+    # Panics
+    * If there are more than [`i32::MAX`] nodes in the triangulation.
+    */
     pub fn voronoi_cells(&mut self) -> Result<Vec<VoronoiCell>, VoronoiCellError> {
         let n = i32::try_from(self.n).unwrap_or_else(|_| {
             panic!(
