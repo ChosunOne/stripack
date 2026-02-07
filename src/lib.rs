@@ -1336,4 +1336,35 @@ mod test {
             panic!("unexpected result: {triangulation:?}");
         };
     }
+
+    proptest! {
+        #[test]
+        fn test_boundary_nodes(n in 9usize..50) {
+            let (x, y, z) = fibonacci_sphere(n);
+            let mut x_hemi = Vec::with_capacity(n);
+            let mut y_hemi = Vec::with_capacity(n);
+            let mut z_hemi = Vec::with_capacity(n);
+            for i in 0..n {
+                if x[i] > 0.1 {
+                    x_hemi.push(x[i]);
+                    y_hemi.push(y[i]);
+                    z_hemi.push(z[i]);
+                }
+            }
+
+            let triangulation = DelaunayTriangulation::new(x_hemi, y_hemi, z_hemi).expect("to make a triangulation");
+            let boundary = triangulation.boundary_nodes();
+            prop_assert!(!boundary.nodes.is_empty());
+            prop_assert!(boundary.nodes.len() >= 3);
+            let nb = boundary.nodes.len();
+            prop_assert_eq!(boundary.num_triangles, 2 * n - 2 - nb);
+            prop_assert_eq!(boundary.num_arcs, 3 * n - 3 - nb);
+
+            let sphere_triangulation = DelaunayTriangulation::new(x, y, z).expect("to make a triangulation");
+            let sphere_boundary = sphere_triangulation.boundary_nodes();
+            prop_assert!(sphere_boundary.nodes.is_empty());
+            prop_assert_eq!(sphere_boundary.num_triangles, 2 * n - 4);
+            prop_assert_eq!(sphere_boundary.num_arcs, 3 * n - 6);
+        }
+    }
 }
