@@ -298,7 +298,7 @@ impl DelaunayTriangulation {
     triangulation of the convex hull of nodes `0, ..., n-1`.
 
     The algorithm consists of the following steps: node `n` is located relative to the
-    triangulation ([find]), its index is added to the data structure ([intadd] or [bdyadd]), and a sequence of swaps ([swptst] and [swap]) are applied to the arcs opposite `n` so that all arcs incident on node `n` and opposite node `n` are locally optimal (statisfy the circumcircle test).
+    triangulation ([`find`]), its index is added to the data structure ([`intadd`] or [`bdyadd`]), and a sequence of swaps ([`swptst`] and [`swap`]) are applied to the arcs opposite `n` so that all arcs incident on node `n` and opposite node `n` are locally optimal (statisfy the circumcircle test).
 
     Thus, if a Delaunay triangulation of nodes `0` through `n - 2` is input, a Delaunay
     triangulation of nodes `0` through `n - 1` will be output.
@@ -1482,7 +1482,36 @@ mod test {
                 prop_assert!(n1_has_tri_idx, "expected to find {tri_idx} as a neighbor of {n1}");
                 prop_assert!(n2_has_tri_idx, "expected to find {tri_idx} as a neighbor of {n2}");
                 prop_assert!(n3_has_tri_idx, "expected to find {tri_idx} as a neighbor of {n3}");
+            }
+        }
 
+        #[test]
+        fn test_find(n in 5usize..50) {
+            let (x, y, z) = fibonacci_sphere(n);
+            let triangulation = DelaunayTriangulation::new(x, y, z).expect("to make a triangulation");
+
+            let mesh_data = triangulation.triangle_mesh().expect("to get a mesh");
+
+            for tri in mesh_data.indices.chunks(3) {
+                let v1 = mesh_data.positions[tri[0]];
+                let v2 = mesh_data.positions[tri[1]];
+                let v3 = mesh_data.positions[tri[2]];
+
+                let cx = (v1[0] + v2[0] + v3[0]) / 3.0;
+                let cy = (v1[1] + v2[1] + v3[1]) / 3.0;
+                let cz = (v1[2] + v2[2] + v3[2]) / 3.0;
+                let norm = (cx * cx + cy * cy + cz * cz).sqrt();
+                let centroid = [cx/norm, cy/norm, cz/norm];
+
+                let location = triangulation.find(tri[0], &centroid);
+                match location {
+                    LocationInfo::InsideTriangle { barycentric_coords, bounding_triangle_indices } => {
+                        prop_assert!(bounding_triangle_indices.contains(&tri[0]) && bounding_triangle_indices.contains(&tri[1]) && bounding_triangle_indices.contains(&tri[2]), "expected bounding triangle to be triangle of centroid");
+
+                        prop_assert!(barycentric_coords[0] > 0.0 && barycentric_coords[1] > 0.0 && barycentric_coords[2] > 0.0, "expected barycentric coordinates to be greater than zero");
+                    },
+                    _ => panic!("centroid should be inside triangle, got {location:?}")
+                }
             }
         }
     }
