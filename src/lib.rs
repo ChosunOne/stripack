@@ -1606,5 +1606,27 @@ mod test {
                 prop_assert!(cell.radius >= 0.0 && cell.radius <= PI / 2.0, "cell radius {} out of range [0, pi/2]", cell.radius);
             }
         }
+
+        #[test]
+        fn test_areas(n in 5usize..50) {
+            let (x, y, z) = fibonacci_sphere(n);
+            let triangulation = DelaunayTriangulation::new(x, y, z).expect("to make a triangulation");
+            let mesh_data = triangulation.triangle_mesh().expect("to get triangle mesh");
+            let mut total_area = 0.0;
+            for tri in mesh_data.indices.chunks(3) {
+                let v1 = &mesh_data.positions[tri[0]];
+                let v2 = &mesh_data.positions[tri[1]];
+                let v3 = &mesh_data.positions[tri[2]];
+
+                let area = areas(v1, v2, v3);
+                prop_assert!(area >= 0.0 && area <= 2.0 * PI, "triangle area {area} out of range [0, 2pi]");
+
+                total_area += area;
+            }
+
+            let expected_area = 4.0 * PI;
+            let diff = (total_area - expected_area).abs();
+            prop_assert!(diff < 1e-10, "expected {expected_area} got {total_area}");
+        }
     }
 }
