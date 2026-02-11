@@ -1442,6 +1442,15 @@ mod test {
         };
     }
 
+    fn unit_vector() -> impl Strategy<Value = [f64; 3]> {
+        (-1.0..=1.0f64, -1.0..=1.0f64, -1.0..=1.0f64)
+            .prop_filter("non-zero", |(x, y, z)| x * x + y * y + z * z > 1e-10)
+            .prop_map(|(x, y, z)| {
+                let norm = (x * x + y * y + z * z).sqrt();
+                [x / norm, y / norm, z / norm]
+            })
+    }
+
     proptest! {
         #[test]
         fn test_triangle_mesh(n in 5usize..50) {
@@ -1513,6 +1522,37 @@ mod test {
                     _ => panic!("centroid should be inside triangle, got {location:?}")
                 }
             }
+        }
+
+        #[test]
+        fn test_nearest_node(n in 5usize..50, query in prop::collection::vec(unit_vector(), 10)) {
+            let (x, y, z) = fibonacci_sphere(n);
+            let triangulation = DelaunayTriangulation::new(x, y, z).expect("to make a triangulation");
+
+            for q in query {
+                let nearest = triangulation.nearest_node(&q, 0).expect("to find nearest node");
+
+                prop_assert!(nearest.index < n, "nearest index is out of bounds");
+                prop_assert!(nearest.arc_length >= 0.0 && nearest.arc_length <= PI, "arc length {} out of range [0, pi]", nearest.arc_length);
+
+                let mut min_dist = f64::INFINITY;
+                let mut min_idx = 0;
+
+                for i in 0..n {
+                    let pos = triangulation.get_vertex_pos(i).expect("to find node");
+                    let dot = q[0] * pos[0] + q[1] * pos[1] + q[2] * pos[2];
+                    let dist = dot.acos();
+                    if dist < min_dist {
+                        min_dist = dist;
+                        min_idx = i;
+                    }
+                }
+
+                prop_assert_eq!(nearest.index, min_idx, "nearest node returned index {} but actual nearest is {}", nearest.index, min_idx);
+                let diff = (nearest.arc_length - min_dist).abs();
+                prop_assert!(diff < 1e-10, "arc length mismatch: got {} expected {min_dist}", nearest.arc_length);
+            }
+
         }
     }
 }
