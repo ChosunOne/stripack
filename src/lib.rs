@@ -1589,7 +1589,22 @@ mod test {
                     }
                 }
             }
+        }
 
+        #[test]
+        fn test_voronoi_cells(n in 5usize..50) {
+            let (x, y, z) = fibonacci_sphere(n);
+            let mut triangulation = DelaunayTriangulation::new(x, y, z).expect("to make a triangulation");
+
+            let cells = triangulation.voronoi_cells().expect("to get voronoi cells");
+            prop_assert_eq!(cells.len(), 2 * n - 4);
+
+            for cell in cells {
+                let pos = cell.position;
+                let norm = (pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2]).sqrt();
+                prop_assert!((norm - 1.0).abs() < 1e-10, "cell position not a unit vector: norm = {norm}");
+                prop_assert!(cell.radius >= 0.0 && cell.radius <= PI / 2.0, "cell radius {} out of range [0, pi/2]", cell.radius);
+            }
         }
     }
 }
