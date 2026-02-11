@@ -1441,4 +1441,49 @@ mod test {
             panic!("unexpected result: {result:?}");
         };
     }
+
+    proptest! {
+        #[test]
+        fn test_triangle_mesh(n in 5usize..50) {
+            let (x, y, z) = fibonacci_sphere(n);
+            let triangulation = DelaunayTriangulation::new(x, y, z).expect("to make a triangulation");
+
+            let mesh_data = triangulation.triangle_mesh().expect("to make triangle mesh");
+            prop_assert_eq!(mesh_data.indices.len() / 3, 2 * n - 4);
+            prop_assert_eq!(mesh_data.positions.len(), n);
+            for (tri_idx, tri) in mesh_data.indices.chunks(3).enumerate() {
+                let v1 = tri[0];
+                let v2 = tri[1];
+                let v3 = tri[2];
+
+                prop_assert!(v1 != v2, "expected distinct vertices in triangle");
+                prop_assert!(v1 != v3, "expected distinct vertices in triangle");
+                prop_assert!(v2 != v3, "expected distinct vertices in triangle");
+
+                prop_assert!(v1 < mesh_data.positions.len());
+                prop_assert!(v2 < mesh_data.positions.len());
+                prop_assert!(v3 < mesh_data.positions.len());
+                prop_assert!(mesh_data.positions[v1] == triangulation.get_vertex_pos(v1).expect("to find vertex"));
+                prop_assert!(mesh_data.positions[v2] == triangulation.get_vertex_pos(v2).expect("to find vertex"));
+                prop_assert!(mesh_data.positions[v3] == triangulation.get_vertex_pos(v3).expect("to find vertex"));
+
+                let n1 = mesh_data.neighbors[tri_idx][0].expect("to have neighbor on sphere");
+                let n2 = mesh_data.neighbors[tri_idx][1].expect("to have neighbor on sphere");
+                let n3 = mesh_data.neighbors[tri_idx][2].expect("to have neighbor on sphere");
+
+                prop_assert!(n1 != n2, "expected neighbors to be different");
+                prop_assert!(n1 != n3, "expected neighbors to be different");
+                prop_assert!(n2 != n3, "expected neighbors to be different");
+
+                let n1_has_tri_idx = mesh_data.neighbors[n1].contains(&Some(tri_idx));
+                let n2_has_tri_idx = mesh_data.neighbors[n2].contains(&Some(tri_idx));
+                let n3_has_tri_idx = mesh_data.neighbors[n3].contains(&Some(tri_idx));
+
+                prop_assert!(n1_has_tri_idx, "expected to find {tri_idx} as a neighbor of {n1}");
+                prop_assert!(n2_has_tri_idx, "expected to find {tri_idx} as a neighbor of {n2}");
+                prop_assert!(n3_has_tri_idx, "expected to find {tri_idx} as a neighbor of {n3}");
+
+            }
+        }
+    }
 }
