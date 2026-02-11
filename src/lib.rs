@@ -733,7 +733,7 @@ impl DelaunayTriangulation {
         }
         let mut npts = vec![0i32; k + 1];
         let mut distances = vec![0.0; k];
-        npts[0] = i32::try_from(node_idx)
+        npts[0] = i32::try_from(node_idx + 1)
             .unwrap_or_else(|_| panic!("expected node_idx to be less than {}", i32::MAX));
 
         // NB: Fortran arrays are 1-indexed
@@ -1551,6 +1551,43 @@ mod test {
                 prop_assert_eq!(nearest.index, min_idx, "nearest node returned index {} but actual nearest is {}", nearest.index, min_idx);
                 let diff = (nearest.arc_length - min_dist).abs();
                 prop_assert!(diff < 1e-10, "arc length mismatch: got {} expected {min_dist}", nearest.arc_length);
+            }
+        }
+
+        #[test]
+        fn test_nearest_nodes(n in 5usize..50, k in 1usize..5) {
+            let (x, y, z) = fibonacci_sphere(n);
+            let triangulation = DelaunayTriangulation::new(x, y, z).expect("to make a triangulation");
+
+            for start_node in [0, n / 2, n - 1] {
+                let nearest_k = triangulation.nearest_nodes(start_node, k);
+
+                prop_assert_eq!(nearest_k.len(), k, "expected {} nearest nodes got {}", k, nearest_k.len());
+
+                for (i, node) in nearest_k.iter().enumerate() {
+                    prop_assert!(node.index < n, "index {} out of bounds", node.index);
+                    prop_assert_ne!(node.index, start_node, "should not return the query node");
+                    prop_assert!(node.arc_length > 0.0 && node.arc_length <= PI, "arc length {} out of range (0, pi]", node.arc_length);
+
+                    if i > 0 {
+                        prop_assert!(node.arc_length >= nearest_k[i - 1].arc_length, "result is not sorted");
+                    }
+                }
+
+                if !nearest_k.is_empty() {
+                    let mut distances = (0..n).filter(|&i| i != start_node).map(|i| {
+                        let pos = triangulation.get_vertex_pos(i).expect("to get vertex position");
+                        let query = triangulation.get_vertex_pos(start_node).expect("to get vertex position");
+                        let dot = query[0] * pos[0] + query[1] * pos[1] + query[2] * pos[2];
+                        (i, dot.acos())
+                    }).collect::<Vec<_>>();
+                    distances.sort_by(|a, b| a.1.partial_cmp(&b.1).expect("to sort distances"));
+
+                    for (i, nearest) in nearest_k.iter().enumerate() {
+                        let diff = (nearest.arc_length - distances[i].1).abs();
+                        prop_assert!(diff < 1e-10, "arc length mismatch at position {i}, got {diff}");
+                    }
+                }
             }
 
         }
