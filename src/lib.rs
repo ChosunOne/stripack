@@ -185,12 +185,12 @@ pub enum LocationInfo {
         */
         bounding_triangle_indices: [usize; 3],
     },
-    ///The rightmost and leftmost (boundary) nodes that are visible from `p`
+    /// The rightmost and leftmost (boundary) nodes that are visible from `p`
     OutsideConvexHull {
         leftmost_visible_index: usize,
         rightmost_visible_index: usize,
     },
-    ///All nodes are coplanar
+    /// All nodes are coplanar
     Coplanar,
 }
 
@@ -393,7 +393,7 @@ impl DelaunayTriangulation {
     * If all nodes (including `start_node`) are collinear (lie on a common geodesic).
 
     # Panics
-    * If `index` is greater than [`i32::MAX`].
+    * If `start_node` is greater than [`i32::MAX`].
      */
     pub fn add_node<'a>(
         &mut self,
@@ -550,9 +550,9 @@ impl DelaunayTriangulation {
         let i1 = usize::try_from(i1)
             .unwrap_or_else(|_| panic!("expected i1 to be greater than or equal to zero"));
         let i2 = usize::try_from(i2)
-            .unwrap_or_else(|_| panic!("expected i1 to be greater than or equal to zero"));
+            .unwrap_or_else(|_| panic!("expected i2 to be greater than or equal to zero"));
         let i3 = usize::try_from(i3)
-            .unwrap_or_else(|_| panic!("expected i1 to be greater than or equal to zero"));
+            .unwrap_or_else(|_| panic!("expected i3 to be greater than or equal to zero"));
 
         match (i1, i2, i3) {
             (0, 0, 0) => LocationInfo::Coplanar,
@@ -742,7 +742,7 @@ impl DelaunayTriangulation {
     * `p` - The Cartesian coordinates of the point `p` to be located relative to the
       triangulation. It is assumed that `p[0]**2 + p[1]**2 + p[2]**2 = 1`, that is, that the point lies on the unit sphere.
     * `start_node` - The index of the node at which the search is to begin. The search time depends on the proximity of this node to `p`. If no good candidate is known, any value
-      between `0` and `n` will do.
+      between `0` and `n - 1` will do.
 
     # Returns
     A [`NearestNode`] struct which contains the index of the nearest node to `p`, and the arc length between `p` and the closest node.
@@ -891,7 +891,7 @@ impl DelaunayTriangulation {
 
     # Arguments
 
-    * `node_index` - The index (for `x`, `y`, and `z`) of the node to be deleted. `0 <= node_index < n`.
+    * `node_idx` - The index (for `x`, `y`, and `z`) of the node to be deleted. `0 <= node_idx < n`.
 
     # Errors
 
@@ -1286,7 +1286,7 @@ Transform spherical coordinates into Cartesian coordinates.
 * `longitudes` - The longitudes of the nodes in radians.
 
 # Returns
-A vector of the transformed spherical coordinates in the range `[-1, 1]`. `x**2 + y**2 + z**2 = 1`.
+A vector of the transformed coordinates in the range `[-1, 1]`. `x**2 + y**2 + z**2 = 1`.
 
 # Panics
 * If latitudes and longitudes do not have the same length.
