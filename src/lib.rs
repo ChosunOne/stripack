@@ -4,7 +4,7 @@ use stripack_sys::ffi::{
 };
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum TriangulationError {
     #[error("not enough nodes")]
     NotEnoughNodes,
@@ -16,7 +16,7 @@ pub enum TriangulationError {
     NotUnitVectors,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum AddNodeError {
     #[error("invalid k value")]
     InvalidIndex,
@@ -24,13 +24,13 @@ pub enum AddNodeError {
     CollinearNodes,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum CircumcenterError {
     #[error("all coordinates are collinear")]
     Collinear,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum DeleteNodeError {
     #[error("invalid node index")]
     InvalidNodeIndex,
@@ -46,7 +46,7 @@ pub enum DeleteNodeError {
     OptimizationError,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum ForceAdjacentError {
     #[error("given nodes are identical or invalid")]
     InvalidNodePair,
@@ -56,7 +56,7 @@ pub enum ForceAdjacentError {
     OptimError,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum InsideError {
     #[error("the input indexes are invalid")]
     InvalidIndexList,
@@ -66,19 +66,19 @@ pub enum InsideError {
     ConsistencyFailure,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum NearestNodeError {
     #[error("invalid or corrupt triangulation")]
     InvalidTriangulation,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum TriangleMeshError {
     #[error("invalid or corrupt triangulation")]
     InvalidTriangulation,
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum VoronoiCellError {
     #[error("not enough nodes in the triangulation to produce Voronoi cells")]
     NotEnoughNodes,
@@ -98,7 +98,7 @@ pub struct BoundaryInfo {
     pub num_triangles: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum LocationInfo {
     InsideTriangle {
         /**
@@ -127,7 +127,7 @@ pub struct NodeDeletionInfo {
     pub new_arc_endpoints: Vec<usize>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct NearestNode {
     /// The index of the nearest node to `p`.
     pub index: usize,
@@ -146,6 +146,7 @@ pub struct SphericalCoordinates {
     pub norm: f64,
 }
 
+#[derive(Debug, Clone)]
 pub struct MeshData {
     /// The positions of points on the unit sphere.
     pub positions: Vec<[f64; 3]>,
@@ -153,10 +154,11 @@ pub struct MeshData {
     pub indices: Vec<usize>,
     /// The indices of the edges/arcs between vertices.
     pub arc_indices: Vec<[usize; 3]>,
-    /// The neighbors, if any, of each of the vertices.
+    /// The neighbors, if any, of each of the triangles.
     pub neighbors: Vec<[Option<usize>; 3]>,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct VoronoiCell {
     /// The position of the circumcircle of the triangle.
     pub position: [f64; 3],
@@ -1665,5 +1667,37 @@ mod test {
                 prop_assert!(!result, "opposite point should be outside");
             }
         }
+
+    }
+    #[test]
+    fn test_force_adjacent() {
+        let n = 5;
+        let (x, y, z) = fibonacci_sphere(n);
+        let mut triangulation =
+            DelaunayTriangulation::new(x, y, z).expect("to make a triangulation");
+
+        let mesh_data = triangulation.triangle_mesh().expect("to make mesh data");
+
+        for tri in mesh_data.indices.chunks(3) {
+            assert!(!(tri.contains(&0) && tri.contains(&4)));
+        }
+
+        triangulation
+            .force_adjacent(0, 4)
+            .expect("to make nodes adjacent");
+
+        let new_mesh_data = triangulation.triangle_mesh().expect("to make mesh data");
+
+        let mut found_link = false;
+        for tri in new_mesh_data.indices.chunks(3) {
+            if tri.contains(&0) && tri.contains(&4) {
+                found_link = true;
+            }
+            if found_link {
+                break;
+            }
+        }
+
+        assert!(found_link, "failed to make nodes adjacent");
     }
 }
