@@ -252,7 +252,7 @@ The Delaunay triangulation is defined as a set of (spherical) triangles with the
 * The triangle vertices are nodes.
 * No triangle contains a node other than its vertices.
 * The interiors of the triangles are pairwise disjoint.
-* The union of triangles is the convex hull of the set of nodes (the smallest convex set that contains the nodes). If the nodes are not contained in a single hemisphere, their convex hull is the entire sphere and there are no boundary nodes. Otherwise, there is at least three boundary nodes.
+* The union of triangles is the convex hull of the set of nodes (the smallest convex set that contains the nodes). If the nodes are not contained in a single hemisphere, their convex hull is the entire sphere and there are no boundary nodes. Otherwise, there are at least three boundary nodes.
 * The interior of the circumcircle of each triangle contains no node.
 
 The first four properties define a triangulation, and the last property results in a triangulation which is as close as possible to equiangular in a certain sense and which is uniquely defined unless four or more nodes lie in a common plane. This property makes the triangulation well-suited for solving closest-point problems and for triangle based interpolation.
@@ -447,7 +447,7 @@ impl DelaunayTriangulation {
     Given a triangulation of `n` nodes on the unit sphere, this method returns an array containing the indexes (if any) of the counterclockwise sequence of boundary nodes, that is, the nodes on the boundary of the convex hull of the set of nodes. The boundary is empty if the nodes do not lie on a single hemisphere. The numbers of boundary nodes, arcs, and triangles are also returned.
 
     # Panics
-    * If the number of nodes, arcs, or triangles in the `DelaunayTriangluation` is set to a value less than 0.
+    * If the number of nodes, arcs, or triangles in the [`DelaunayTriangulation`] is set to a value less than 0.
     */
     #[must_use]
     pub fn boundary_nodes(&self) -> BoundaryInfo {
@@ -497,7 +497,7 @@ impl DelaunayTriangulation {
 
     This method locates a point `p` relative to a [`DelaunayTriangulation`]. If `p` is contained in a triangle, the three vertex indices and barycentric coordinates are returned. Otherwise, the indices of the visible boundary nodes are returned.
 
-    # Arguments:
+    # Arguments
     * `start_node` - The index of a node at which [`find`](DelaunayTriangulation::find) begins its search. Search time depends on
       the proximity of this node to `p`.
     * `p` - The `x`, `y`, and `z` coordinates (in that order) of the point `p` to be located.
@@ -584,7 +584,7 @@ impl DelaunayTriangulation {
     * If an error occurred during optimization of the triangulation
 
     # Panics
-    * If `node_idx_1` or `node_idx_2` are not less than [`i32::MAX`].
+    * If `node_idx_1` or `node_idx_2` is greater than or equal to [`i32::MAX`].
     * If the [`DelaunayTriangulation`] has less than three nodes.
      */
     pub fn force_adjacent(
@@ -657,7 +657,7 @@ impl DelaunayTriangulation {
 
     # Arguments
     * `p` - The coordinates of the point (unit vector) to be located.
-    * `region_node_idx` - The indexes of a cyclically-ordered (and CCW-ordered) sequence of
+    * `region_node_idxs` - The indexes of a cyclically-ordered (and CCW-ordered) sequence of
       vertices that define a region. The last vertex is followed by the first.
 
     # Returns
@@ -885,7 +885,7 @@ impl DelaunayTriangulation {
     /**
     Deletes a node from a triangulation.
 
-    This method deletes node `node_index` (along with all arcs incident on node `node_index`) from a triangulation of `n` nodes on the unit sphere, and inserts arcs as necessary to produce a triangulation of the remaining `n - 1` nodes. If a Delaunay triangulation is input, a Delaunay triangulation will be the result, and thus [`remove_node`](`DelaunayTriangulation::remove_node`) reverses the effect of a call to [`add_node`](`DelaunayTriangulation::add_node`).
+    This method deletes node `node_index` (along with all arcs incident on node `node_index`) from a triangulation of `n` nodes on the unit sphere, and inserts arcs as necessary to produce a triangulation of the remaining `n - 1` nodes. If a Delaunay triangulation is input, a Delaunay triangulation will be the result, and thus [`remove_node`](DelaunayTriangulation::remove_node) reverses the effect of a call to [`add_node`](DelaunayTriangulation::add_node).
 
     Note that the deletion may result in all remaining nodes being collinear. This situation is not flagged.
 
@@ -1217,7 +1217,7 @@ Returns the circumcenter of a spherical triangle on the unit sphere: the point o
 
 # Arguments
 
-* `v1`, `v2`, `v3` - The coordinates of teh three triangle vertices (unit vectors) in
+* `v1`, `v2`, `v3` - The coordinates of the three triangle vertices (unit vectors) in
   counterclockwise order.
 
 # Returns
@@ -1764,7 +1764,7 @@ mod test {
             let vol = dot(&v1, &cross);
             prop_assume!(vol.abs() > 1e-10);
 
-            let center = circumcenter(&v1, &v2, &v3).expect("to compute circumenter");
+            let center = circumcenter(&v1, &v2, &v3).expect("to compute circumcenter");
 
             let center_norm = norm(center[0], center[1], center[2]);
             prop_assert!((center_norm - 1.0).abs() < 1e-10, "circumcenter not unit vector: norm = {center_norm}");
