@@ -1270,6 +1270,18 @@ mod test {
         [v[0] / n, v[1] / n, v[2] / n]
     }
 
+    fn dot(v1: &[f64; 3], v2: &[f64; 3]) -> f64 {
+        v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2]
+    }
+
+    fn cross_product(v1: &[f64; 3], v2: &[f64; 3]) -> [f64; 3] {
+        [
+            v1[1] * v2[2] - v1[2] * v2[1],
+            v1[2] * v2[0] - v1[0] * v2[2],
+            v1[0] * v2[1] - v1[1] * v2[0],
+        ]
+    }
+
     fn fibonacci_sphere(n: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
         let gr = f64::midpoint(1.0, 5.0f64.sqrt());
         let mut x_points = Vec::with_capacity(n);
@@ -1666,6 +1678,30 @@ mod test {
                 let result = triangulation.is_inside(&opposite, tri).expect("to determine if point is inside region");
                 prop_assert!(!result, "opposite point should be outside");
             }
+        }
+
+        #[test]
+        fn test_circumcenter(v1 in unit_vector(), v2 in unit_vector(), v3 in unit_vector()) {
+            let cross = cross_product(&v2, &v3);
+            let vol = dot(&v1, &cross);
+            prop_assume!(vol.abs() > 1e-10);
+
+            let center = circumcenter(&v1, &v2, &v3).expect("to compute circumenter");
+
+            let center_norm = norm(center[0], center[1], center[2]);
+            prop_assert!((center_norm - 1.0).abs() < 1e-10, "circumcenter not unit vector: norm = {center_norm}");
+
+            let dot1 = dot(&center, &v1);
+            let dot2 = dot(&center, &v2);
+            let dot3 = dot(&center, &v3);
+
+            let d1 = arc_cosine(dot1);
+            let d2 = arc_cosine(dot2);
+            let d3 = arc_cosine(dot3);
+
+            prop_assert!((d1 - d2).abs() < 1e-10, "distances not equal: d1={d1}, d2={d2}");
+            prop_assert!((d1 - d3).abs() < 1e-10, "distances not equal: d1={d1}, d3={d3}");
+            prop_assert!((d2 - d3).abs() < 1e-10, "distances not equal: d2={d2}, d3={d3}");
         }
 
     }
