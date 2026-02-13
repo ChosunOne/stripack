@@ -1263,7 +1263,7 @@ fn norm(x: f64, y: f64, z: f64) -> f64 {
 mod test {
     use super::*;
     use proptest::prelude::*;
-    use std::f64::consts::PI;
+    use std::f64::consts::{FRAC_PI_2, PI};
 
     fn normalize(v: &[f64; 3]) -> [f64; 3] {
         let n = norm(v[0], v[1], v[2]);
@@ -1704,6 +1704,21 @@ mod test {
             prop_assert!((d2 - d3).abs() < 1e-10, "distances not equal: d2={d2}, d3={d3}");
         }
 
+        #[test]
+        fn test_coordinate_round_trip(lat in -FRAC_PI_2..FRAC_PI_2, lon in -PI..PI) {
+            let latitudes = [lat];
+            let longitudes = [lon];
+            let cartesian = cartesian_coordinates(&latitudes[..], &longitudes[..]);
+            let point = &cartesian[0];
+
+            let spherical = spherical_coordinates(point);
+            let lat_diff = (spherical.latitude - lat).abs();
+            let lon_diff = (spherical.longitude - lon).abs();
+
+            prop_assert!(lat_diff < 1e-10, "latitude mismatch: expected {lat} got {}", spherical.latitude);
+            prop_assert!(lon_diff < 1e-10, "longitude mismatch: expected {lon} got {}", spherical.longitude);
+            prop_assert!((spherical.norm - 1.0).abs() < 1e-10, "should get norm of 1, got {}", spherical.norm);
+        }
     }
     #[test]
     fn test_force_adjacent() {
