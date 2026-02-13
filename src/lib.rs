@@ -240,7 +240,8 @@ impl DelaunayTriangulation {
         }
 
         for i in 0..x.len() {
-            if ((x[i].powi(2) + y[i].powi(2) + z[i].powi(2)).sqrt() - 1.0).abs() > f64::EPSILON {
+            let nrm = norm(x[i], y[i], z[i]);
+            if (nrm - 1.0).abs() > f64::EPSILON {
                 return Err(TriangulationError::NotUnitVectors);
             }
         }
@@ -610,12 +611,12 @@ impl DelaunayTriangulation {
         let mut zv = Vec::with_capacity(region_node_idxs.len());
         let mut listv = Vec::with_capacity(region_node_idxs.len());
 
-        for &idx in region_node_idxs {
+        for (i, &idx) in region_node_idxs.iter().enumerate() {
             xv.push(self.x[idx]);
             yv.push(self.y[idx]);
             zv.push(self.z[idx]);
             listv.push(
-                i32::try_from(idx + 1)
+                i32::try_from(i + 1)
                     .unwrap_or_else(|_| panic!("expected index to be less than {}", i32::MAX)),
             );
         }
@@ -1252,12 +1253,20 @@ pub fn cartesian_coordinates<'a, 'b>(
 
     result
 }
+fn norm(x: f64, y: f64, z: f64) -> f64 {
+    (x.powi(2) + y.powi(2) + z.powi(2)).sqrt()
+}
 
 #[cfg(test)]
 mod test {
     use super::*;
     use proptest::prelude::*;
     use std::f64::consts::PI;
+
+    fn normalize(v: &[f64; 3]) -> [f64; 3] {
+        let n = norm(v[0], v[1], v[2]);
+        [v[0] / n, v[1] / n, v[2] / n]
+    }
 
     fn fibonacci_sphere(n: usize) -> (Vec<f64>, Vec<f64>, Vec<f64>) {
         let gr = f64::midpoint(1.0, 5.0f64.sqrt());
@@ -1272,11 +1281,11 @@ mod test {
             let y = phi.sin() * theta.sin();
             let z = phi.cos();
 
-            let norm = (x.powi(2) + y.powi(2) + z.powi(2)).sqrt();
+            let nrm = norm(x, y, z);
 
-            x_points.push(x / norm);
-            y_points.push(y / norm);
-            z_points.push(z / norm);
+            x_points.push(x / nrm);
+            y_points.push(y / nrm);
+            z_points.push(z / nrm);
         }
 
         (x_points, y_points, z_points)
@@ -1445,10 +1454,7 @@ mod test {
     fn unit_vector() -> impl Strategy<Value = [f64; 3]> {
         (-1.0..=1.0f64, -1.0..=1.0f64, -1.0..=1.0f64)
             .prop_filter("non-zero", |(x, y, z)| x * x + y * y + z * z > 1e-10)
-            .prop_map(|(x, y, z)| {
-                let norm = (x * x + y * y + z * z).sqrt();
-                [x / norm, y / norm, z / norm]
-            })
+            .prop_map(|(x, y, z)| normalize(&[x, y, z]))
     }
 
     proptest! {
@@ -1509,8 +1515,7 @@ mod test {
                 let cx = (v1[0] + v2[0] + v3[0]) / 3.0;
                 let cy = (v1[1] + v2[1] + v3[1]) / 3.0;
                 let cz = (v1[2] + v2[2] + v3[2]) / 3.0;
-                let norm = (cx * cx + cy * cy + cz * cz).sqrt();
-                let centroid = [cx/norm, cy/norm, cz/norm];
+                let centroid = normalize(&[cx, cy, cz]);
 
                 let location = triangulation.find(tri[0], &centroid);
                 match location {
@@ -1601,8 +1606,8 @@ mod test {
 
             for cell in cells {
                 let pos = cell.position;
-                let norm = (pos[0] * pos[0] + pos[1] * pos[1] + pos[2] * pos[2]).sqrt();
-                prop_assert!((norm - 1.0).abs() < 1e-10, "cell position not a unit vector: norm = {norm}");
+                let nrm = norm(pos[0], pos[1], pos[2]);
+                prop_assert!((nrm - 1.0).abs() < 1e-10, "cell position not a unit vector: norm = {nrm}");
                 prop_assert!(cell.radius >= 0.0 && cell.radius <= PI / 2.0, "cell radius {} out of range [0, pi/2]", cell.radius);
             }
         }
@@ -1634,6 +1639,31 @@ mod test {
             let ac = arc_cosine(theta);
             let expected_ac = theta.clamp(-1.0, 1.0).acos();
             prop_assert_eq!(ac, expected_ac);
+        }
+
+        #[test]
+        fn test_is_inside(n in 5usize..50) {
+            let (x, y, z) = fibonacci_sphere(n);
+            let triangulation = DelaunayTriangulation::new(x, y, z).expect("to make a triangulation");
+
+            let mesh_data = triangulation.triangle_mesh().expect("to make a mesh");
+
+            for tri in mesh_data.indices.chunks(3) {
+                let v1 = mesh_data.positions[tri[0]];
+                let v2 = mesh_data.positions[tri[1]];
+                let v3 = mesh_data.positions[tri[2]];
+
+                let cx = (v1[0] + v2[0] + v3[0]) / 3.0;
+                let cy = (v1[1] + v2[1] + v3[1]) / 3.0;
+                let cz = (v1[2] + v2[2] + v3[2]) / 3.0;
+                let centroid = normalize(&[cx, cy, cz]);
+                let result = triangulation.is_inside(&centroid, tri).expect("to determine if point is inside region");
+                prop_assert!(result, "centroid should be inside triangle");
+
+                let opposite = [-v1[0], -v1[1], -v1[2]];
+                let result = triangulation.is_inside(&opposite, tri).expect("to determine if point is inside region");
+                prop_assert!(!result, "opposite point should be outside");
+            }
         }
     }
 }
