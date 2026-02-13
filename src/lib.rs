@@ -899,7 +899,7 @@ impl DelaunayTriangulation {
     * If not enough space can be reserved for reporting the new arcs
     * If the triangulation is invalid
     * If `node_idx` indexes an interior node with four or more neighbors, none of which can be
-      swapped out due to collinearity, and `node_index` cannot therefore be deleted.
+      swapped out due to collinearity, and `node_idx` cannot therefore be deleted.
     * If optimization produces an error
 
     # Panics
