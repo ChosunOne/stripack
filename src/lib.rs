@@ -1,3 +1,76 @@
+/*!
+# STRIPACK
+Delaunay Triangulation on the Unit Sphere.
+
+A safe Rust wrapper for the STRIPACK library, providing Delaunay triangulation
+of points distributed on the surface of a unit sphere.
+
+# Overview
+
+This crate provides algorithms for creating and manipulating Delaunay triangulations
+on spherical surfaces. A Delaunay triangulation maximizes the minimum angle of all
+triangles, making it optimal for interpolation and nearest-neighbor queries.
+
+# Features
+
+- **Triangulation Construction**: Build Delaunay triangulations from sets of points on the unit sphere
+- **Dynamic Operations**: Add or remove nodes while maintaining the Delaunay property
+- **Triangle Mesh Extraction**: Get triangle indices, neighbor information, and edge data
+- **Voronoi Diagrams**: Generate Voronoi cells (dual of Delaunay triangulation)
+- **Point Location**: Find which triangle contains a given point
+- **Nearest Neighbor Queries**: Find the k-nearest nodes to any point or node
+- **Boundary Detection**: Identify boundary nodes for hemispherical data sets
+- **Geometric Utilities**: Circumcenters, spherical triangle areas, coordinate conversions
+
+# Quick Start
+
+```rust
+use stripack::DelaunayTriangulation;
+
+// Create triangulation from unit vectors
+let x = vec![1.0, 0.0, 0.0, 0.0];
+let y = vec![0.0, 1.0, 0.0, 0.0];
+let z = vec![0.0, 0.0, 1.0, 1.0];
+
+let triangulation = DelaunayTriangulation::new(x, y, z)?;
+
+// Extract triangle mesh
+let mesh = triangulation.triangle_mesh()?;
+
+// Find nearest node to a point
+let nearest = triangulation.nearest_node(&[1.0, 0.0, 0.0], 0)?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+# Main Types
+
+- [`DelaunayTriangulation`]: The primary structure representing a triangulation
+- [`MeshData`]: Triangle mesh with indices, neighbors, and positions
+- [`VoronoiCell`]: Circumcenter and radius information for Voronoi diagrams
+- [`LocationInfo`]: Result of point location queries
+- [`NearestNode`]: Index and distance for nearest neighbor queries
+
+# Safety
+
+This crate provides a memory-safe wrapper around the STRIPACK Fortran library.
+All FFI calls are encapsulated and exposed through a safe, idiomatic Rust API.
+
+# Coordinate Systems
+
+Points must lie on the unit sphere (x² + y² + z² = 1). Helper functions are provided
+for converting between Cartesian and spherical coordinates.
+
+# Performance
+
+Expected O(N log N) time complexity for construction with randomly ordered nodes.
+Worst case O(N²) if nodes are ordered (e.g., by latitude).
+
+# See Also
+
+- [STRIPACK Documentation](https://people.math.sc.edu/Burkardt/f_src/stripack/stripack.html)
+- [stripack-sys](https://crates.io/crates/stripack-sys): Low-level FFI bindings
+*/
+
 use stripack_sys::ffi::{
     addnod, bnodes, circum, crlist, delnod, edge, getnp, inside, nbcnt, nearnd, scoord, trans,
     trfind, trlist, trmesh,
@@ -121,12 +194,14 @@ pub enum LocationInfo {
     Coplanar,
 }
 
+/// The information related to the new triangulation created by deleting a node.
 #[derive(Debug, Clone)]
 pub struct NodeDeletionInfo {
     /// The indexes of the endpoints of the new arcs added.
     pub new_arc_endpoints: Vec<usize>,
 }
 
+/// Information about the nearest node
 #[derive(Debug, Clone, Copy)]
 pub struct NearestNode {
     /// The index of the nearest node to `p`.
@@ -136,6 +211,7 @@ pub struct NearestNode {
     pub arc_length: f64,
 }
 
+/// Coordinates on a sphere.
 #[derive(Debug, Copy, Clone)]
 pub struct SphericalCoordinates {
     /// The latitude in the range `[-PI/2, PI/2]`, or `0` if `norm = 0`.
@@ -146,6 +222,7 @@ pub struct SphericalCoordinates {
     pub norm: f64,
 }
 
+/// The mesh data for the triangulation.
 #[derive(Debug, Clone)]
 pub struct MeshData {
     /// The positions of points on the unit sphere.
@@ -158,6 +235,7 @@ pub struct MeshData {
     pub neighbors: Vec<[Option<usize>; 3]>,
 }
 
+/// Information about a Voronoi cell.
 #[derive(Debug, Clone, Copy)]
 pub struct VoronoiCell {
     /// The position of the circumcircle of the triangle.
@@ -301,13 +379,13 @@ impl DelaunayTriangulation {
     triangulation of the convex hull of nodes `0, ..., n-1`.
 
     The algorithm consists of the following steps: node `n` is located relative to the
-    triangulation ([`find`]), its index is added to the data structure ([`intadd`] or [`bdyadd`]), and a sequence of swaps ([`swptst`] and [`swap`]) are applied to the arcs opposite `n` so that all arcs incident on node `n` and opposite node `n` are locally optimal (statisfy the circumcircle test).
+    triangulation ([`find`](DelaunayTriangulation::find)), its index is added to the data structure (`intadd` or `bdyadd`), and a sequence of swaps (`swptst` and `swap`) are applied to the arcs opposite `n` so that all arcs incident on node `n` and opposite node `n` are locally optimal (satisfy the circumcircle test).
 
     Thus, if a Delaunay triangulation of nodes `0` through `n - 2` is input, a Delaunay
     triangulation of nodes `0` through `n - 1` will be output.
 
     # Arguments
-    * `start_node`: The index of a node in which [`find`] begins its search.
+    * `start_node`: The index of a node in which [`find`](DelaunayTriangulation::find) begins its search.
     * `p`: The coordinate of the new node to add.
 
     # Errors
@@ -420,7 +498,7 @@ impl DelaunayTriangulation {
     This method locates a point `p` relative to a [`DelaunayTriangulation`]. If `p` is contained in a triangle, the three vertex indices and barycentric coordinates are returned. Otherwise, the indices of the visible boundary nodes are returned.
 
     # Arguments:
-    * `start_node` - The index of a node at which [`find`] begins its search. Search time depends on
+    * `start_node` - The index of a node at which [`find`](DelaunayTriangulation::find) begins its search. Search time depends on
       the proximity of this node to `p`.
     * `p` - The `x`, `y`, and `z` coordinates (in that order) of the point `p` to be located.
 
@@ -494,7 +572,7 @@ impl DelaunayTriangulation {
 
     Given a [`DelaunayTriangulation`] and a pair of nodal indexes, `node_idx_1` and `node_idx_2`, this method will swap arcs as necessary to force `node_idx_1` and `node_idx_2` to be adjacent. Only arcs which intersect `node_idx_1-node_idx-2` are swapped out. The resulting triangulation is as close as possible to a Delaunay triangulation in the sense that all arcs other than `in1-in2` are locally optimal.
 
-    A sequence of calls to [`force_adjacent`] may be used to force the presence of a set of edges defining the boundary of a non-convex and/or multiply connected region, or to introduce barriers into the triangulation. Note that [`get_nearest_nodes`] will not necessarily return closest nodes if the triangulation has been constrained by a call to [`force_adjacent`]. However, this is appropriate in some applications, such as triangle-based interpolation on a nonconvex domain.
+    A sequence of calls to [`force_adjacent`](DelaunayTriangulation::force_adjacent) may be used to force the presence of a set of edges defining the boundary of a non-convex and/or multiply connected region, or to introduce barriers into the triangulation. Note that [`nearest_nodes`](DelaunayTriangulation::nearest_nodes) will not necessarily return closest nodes if the triangulation has been constrained by a call to [`force_adjacent`](DelaunayTriangulation::force_adjacent). However, this is appropriate in some applications, such as triangle-based interpolation on a nonconvex domain.
 
     # Arguments
     * `node_idx_1`, `node_idx_2` - The indexes of nodes defining a pair of nodes to be connected
@@ -506,7 +584,7 @@ impl DelaunayTriangulation {
     * If an error occurred during optimization of the triangulation
 
     # Panics
-    * If `node_idx_1` or `node_idx_2` are not less than [`i32;:MAX`].
+    * If `node_idx_1` or `node_idx_2` are not less than [`i32::MAX`].
     * If the [`DelaunayTriangulation`] has less than three nodes.
      */
     pub fn force_adjacent(
@@ -575,7 +653,7 @@ impl DelaunayTriangulation {
 
     The algorithm consists of selecting a point `q` in the region and then finding all points at which the great circle defined by `p` and `q` intersects the boundary of the region. `p` lies outside the region if and only if there is an even number of intersection points between `q` and `p`. `q` is taken to be a point immediately to the left of a directed boundary edge -- the first one that results in no consistency-check failures.
 
-    If `p` is close to the polygon boundary, the problem is ill-conditioned and the decision may be incorrect. Also, an incorrect decision may result from a poor choice of `q` (if, for example, a boundary edge lies on the great circle defined by `p` and `q`). A more reliable result could be obtained by a sequence of calls to [`is_inside`] with the vertices cyclically permuted before each call (to alter the choice of `q`).
+    If `p` is close to the polygon boundary, the problem is ill-conditioned and the decision may be incorrect. Also, an incorrect decision may result from a poor choice of `q` (if, for example, a boundary edge lies on the great circle defined by `p` and `q`). A more reliable result could be obtained by a sequence of calls to [`is_inside`](DelaunayTriangulation::is_inside) with the vertices cyclically permuted before each call (to alter the choice of `q`).
 
     # Arguments
     * `p` - The coordinates of the point (unit vector) to be located.
@@ -657,7 +735,7 @@ impl DelaunayTriangulation {
 
     For large values of `n`, this procedure will be faster than the naive approach of computing the distance from `p` to every node.
 
-    Note that the number of candidates for [`nearest_node`] (neighbors of `p`) is limited to `25`.
+    Note that the number of candidates for [`nearest_node`](DelaunayTriangulation::nearest_node) (neighbors of `p`) is limited to `25`.
 
     # Arguments
 
@@ -807,7 +885,7 @@ impl DelaunayTriangulation {
     /**
     Deletes a node from a triangulation.
 
-    This method deletes node `node_index` (along with all arcs incident on node `node_index`) from a triangulation of `n` nodes on the unit sphere, and inserts arcs as necessary to produce a triangulation of the remaining `n - 1` nodes. If a Delaunay triangulation is input, a Delaunay triangulation will be the result, and thus [`remove_node`] reverses the effect of a call to [`add_node`].
+    This method deletes node `node_index` (along with all arcs incident on node `node_index`) from a triangulation of `n` nodes on the unit sphere, and inserts arcs as necessary to produce a triangulation of the remaining `n - 1` nodes. If a Delaunay triangulation is input, a Delaunay triangulation will be the result, and thus [`remove_node`](`DelaunayTriangulation::remove_node`) reverses the effect of a call to [`add_node`](`DelaunayTriangulation::add_node`).
 
     Note that the deletion may result in all remaining nodes being collinear. This situation is not flagged.
 
