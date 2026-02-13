@@ -240,7 +240,7 @@ pub struct MeshData {
 pub struct VoronoiCell {
     /// The position of the circumcircle of the triangle.
     pub position: [f64; 3],
-    /// The circumradii (the arc length or angle between the circumcenter and associated
+    /// The circumradius (the arc length or angle between the circumcenter and associated
     /// triangle vertex).
     pub radius: f64,
 }
@@ -898,7 +898,7 @@ impl DelaunayTriangulation {
     * If `node_idx` is invalid
     * If not enough space can be reserved for reporting the new arcs
     * If the triangulation is invalid
-    * If `node_index` indexes an interior node with four or more neighbors, none of which can be
+    * If `node_idx` indexes an interior node with four or more neighbors, none of which can be
       swapped out due to collinearity, and `node_index` cannot therefore be deleted.
     * If optimization produces an error
 
