@@ -321,7 +321,7 @@ impl DelaunayTriangulation {
 
         for i in 0..x.len() {
             let nrm = norm(x[i], y[i], z[i]);
-            if (nrm - 1.0).abs() > f64::EPSILON {
+            if (nrm - 1.0).abs() > 1e-10 {
                 return Err(TriangulationError::NotUnitVectors);
             }
         }
