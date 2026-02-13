@@ -1628,5 +1628,12 @@ mod test {
             let diff = (total_area - expected_area).abs();
             prop_assert!(diff < 1e-10, "expected {expected_area} got {total_area}");
         }
+
+        #[test]
+        fn test_arc_cosine(theta in -10.0f64..10.0f64) {
+            let ac = arc_cosine(theta);
+            let expected_ac = theta.clamp(-1.0, 1.0).acos();
+            prop_assert_eq!(ac, expected_ac);
+        }
     }
 }
