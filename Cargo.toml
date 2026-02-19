@@ -1,6 +1,6 @@
 [package]
 name = "stripack"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ChosunOne/stripack"
@@ -11,9 +11,9 @@ description = "Safe wrapper for STRIPACK for Delaunay triangulation on the unit 
 rust-version = "1.93.1"
 
 [dependencies]
-stripack-sys = "^0.1.1"
+stripack-sys = "^0.1.2"
 thiserror = "^2.0.18"
 
 [dev-dependencies]
 proptest = {version = "^1.10.0", features = ["std"]}
-test-strategy = "^0.4.4"
+test-strategy = "^0.4.5"
